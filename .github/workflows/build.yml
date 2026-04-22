@@ -47,14 +47,13 @@ jobs:
 
       - name: Install Android SDK
         run: |
-          mkdir -p /home/runner/.buildozer/android/platform/android-sdk
-          cd /home/runner/.buildozer/android/platform/android-sdk
+          cd /home/runner/.buildozer/android/platform/
+          mkdir -p android-sdk
+          cd android-sdk
           wget https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
           unzip -q commandlinetools-linux-11076708_latest.zip
           rm commandlinetools-linux-11076708_latest.zip
-          mkdir -p cmdline-tools
-          mv tools cmdline-tools/latest
-          export PATH=$PATH:$PWD/cmdline-tools/latest/bin
+          export PATH=$PATH:$PWD/cmdline-tools/bin
           yes | sdkmanager --licenses
           sdkmanager "platform-tools" "platforms;android-30" "build-tools;30.0.3"
         env:
@@ -63,7 +62,7 @@ jobs:
       - name: Build APK
         run: |
           export ANDROID_SDK_ROOT=/home/runner/.buildozer/android/platform/android-sdk
-          export PATH=$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin
+          export PATH=$PATH:$ANDROID_SDK_ROOT/cmdline-tools/bin
           buildozer init
           cat >> buildozer.spec << 'EOF'
           android.accept_sdk_license = True
