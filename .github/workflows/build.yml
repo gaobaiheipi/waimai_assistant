@@ -57,6 +57,9 @@ jobs:
           export PATH=$PATH:$PWD/bin
           yes | sdkmanager --licenses
           sdkmanager "platform-tools" "platforms;android-30" "build-tools;30.0.3"
+          # 创建软链接让 buildozer 能找到
+          cd /home/runner/.buildozer/android/platform/android-sdk
+          ln -s cmdline-tools/latest tools
         env:
           ANDROID_SDK_ROOT: /home/runner/.buildozer/android/platform/android-sdk
 
