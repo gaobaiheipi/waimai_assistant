@@ -29,7 +29,7 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          pip install cython buildozer modelscope
+          pip install cython buildozer huggingface-hub
 
       - name: Install Android SDK command line tools
         run: |
@@ -50,28 +50,26 @@ jobs:
         env:
           ANDROID_SDK_ROOT: /home/runner/android-sdk
 
-      - name: Download 0.5B model from Aliyun mirror
+      - name: Download 0.5B model
         run: |
-          mkdir -p models/Qwen/Qwen2.5-0.5B-Instruct
-          cd models/Qwen/Qwen2.5-0.5B-Instruct
-          
-          wget -q https://modelscope.oss-cn-beijing.aliyuncs.com/qwen/Qwen2.5-0.5B-Instruct/model.safetensors
-          wget -q https://modelscope.oss-cn-beijing.aliyuncs.com/qwen/Qwen2.5-0.5B-Instruct/config.json
-          wget -q https://modelscope.oss-cn-beijing.aliyuncs.com/qwen/Qwen2.5-0.5B-Instruct/tokenizer.json
-          wget -q https://modelscope.oss-cn-beijing.aliyuncs.com/qwen/Qwen2.5-0.5B-Instruct/tokenizer_config.json
-          wget -q https://modelscope.oss-cn-beijing.aliyuncs.com/qwen/Qwen2.5-0.5B-Instruct/vocab.json
-          wget -q https://modelscope.oss-cn-beijing.aliyuncs.com/qwen/Qwen2.5-0.5B-Instruct/merges.txt
-          wget -q https://modelscope.oss-cn-beijing.aliyuncs.com/qwen/Qwen2.5-0.5B-Instruct/generation_config.json
-          
+          python -c "
+          from huggingface_hub import snapshot_download
+          snapshot_download(
+            repo_id='Qwen/Qwen2.5-0.5B-Instruct',
+            local_dir='./models/Qwen/Qwen2.5-0.5B-Instruct',
+            endpoint='https://hf-mirror.com',
+            resume_download=True
+          )
+          "
           echo "Download complete"
-          ls -la
+          ls -la models/Qwen/Qwen2.5-0.5B-Instruct/
 
       - name: Build APK
         run: |
           export ANDROID_SDK_ROOT=/home/runner/android-sdk
           export PATH=$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin
           buildozer init
-          sed -i 's/requirements = python3,kivy/requirements = python3,kivy==2.3.0,kivymd==1.2.0,requests,protobuf,sentencepiece,torch,transformers/' buildozer.spec
+          sed -i 's/requirements = python3,kivy/requirements = python3,kivy==2.3.0,kivymd==1.2.0,requests,protobuf,sentencepiece,torch,transformers,huggingface-hub/' buildozer.spec
           sed -i 's/# android.permissions =/android.permissions = INTERNET/' buildozer.spec
           sed -i 's/# android.api =/android.api = 30/' buildozer.spec
           sed -i 's/# android.minapi =/android.minapi = 21/' buildozer.spec
