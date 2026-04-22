@@ -33,21 +33,32 @@ jobs:
 
       - name: Build APK
         run: |
+          # 使用系统预装的 Android SDK
+          export ANDROID_SDK_ROOT=/usr/local/lib/android/sdk
+          export ANDROID_HOME=/usr/local/lib/android/sdk
+          export PATH=$PATH:$ANDROID_SDK_ROOT/tools/bin:$ANDROID_SDK_ROOT/platform-tools
+          
           buildozer init
+          
+          # 配置 buildozer.spec
           cat >> buildozer.spec << 'EOF'
           android.accept_sdk_license = True
           android.ndk = 23b
           android.sdk = 30
+          android.sdk_path = /usr/local/lib/android/sdk
+          android.ndk_path = /usr/local/lib/android/sdk/ndk/23b
           EOF
-          # 修改 requirements（只需要 requests，不需要 torch/transformers）
           sed -i 's/requirements = python3,kivy/requirements = python3,kivy==2.3.0,kivymd==1.2.0,requests/' buildozer.spec
           sed -i 's/# android.permissions =/android.permissions = INTERNET/' buildozer.spec
           sed -i 's/# android.api =/android.api = 30/' buildozer.spec
           sed -i 's/# android.minapi =/android.minapi = 21/' buildozer.spec
           sed -i 's/orientation = landscape/orientation = portrait/' buildozer.spec
+          
           buildozer -v android debug
         env:
           HOME: /home/runner
+          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+          ANDROID_HOME: /usr/local/lib/android/sdk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
