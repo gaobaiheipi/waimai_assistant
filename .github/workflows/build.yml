@@ -47,14 +47,13 @@ jobs:
 
       - name: Install Android SDK
         run: |
-          mkdir -p /home/runner/.buildozer/android/platform/android-sdk
-          cd /home/runner/.buildozer/android/platform/
+          mkdir -p /home/runner/.buildozer/android/platform/android-sdk/cmdline-tools
+          cd /home/runner/.buildozer/android/platform/android-sdk/cmdline-tools
           wget https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
           unzip -q commandlinetools-linux-11076708_latest.zip
           rm commandlinetools-linux-11076708_latest.zip
-          mkdir -p cmdline-tools
-          mv cmdline-tools cmdline-tools/latest
-          export PATH=$PATH:$PWD/cmdline-tools/latest/bin
+          mv cmdline-tools latest
+          export PATH=$PATH:$PWD/latest/bin
           yes | sdkmanager --licenses
           sdkmanager "platform-tools" "platforms;android-30" "build-tools;30.0.3"
         env:
