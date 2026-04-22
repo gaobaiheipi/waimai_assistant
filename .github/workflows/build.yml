@@ -47,28 +47,13 @@ jobs:
 
       - name: Build APK
         run: |
-          cat > buildozer.spec << 'EOF'
-[app]
-title = WaimaiAssistant
-package.name = waimaiassistant
-package.domain = com.example
-source.dir = .
-source.include_exts = py,png,jpg,kv,atlas,ttf,ttc,otf
-version = 0.1
-requirements = python3,kivy==2.3.0,kivymd==1.2.0,requests,protobuf,sentencepiece,torch,transformers,huggingface-hub
-orientation = portrait
-fullscreen = 1
-android.permissions = INTERNET
-android.api = 30
-android.minapi = 21
-android.ndk = 23b
-android.sdk = 30
-android.archs = armeabi-v7a
-android.allow_backup = True
-android.accept_sdk_license = True
-log_level = 2
-warn_on_root = 1
-EOF
+          buildozer init
+          sed -i 's/requirements = python3,kivy/requirements = python3,kivy==2.3.0,kivymd==1.2.0,requests,protobuf,sentencepiece,torch,transformers,huggingface-hub/' buildozer.spec
+          sed -i 's/# android.permissions =/android.permissions = INTERNET/' buildozer.spec
+          sed -i 's/# android.api =/android.api = 30/' buildozer.spec
+          sed -i 's/# android.minapi =/android.minapi = 21/' buildozer.spec
+          sed -i 's/orientation = landscape/orientation = portrait/' buildozer.spec
+          echo "android.accept_sdk_license = True" >> buildozer.spec
           buildozer -v android debug
         env:
           HOME: /home/runner
