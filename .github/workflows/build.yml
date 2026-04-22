@@ -29,52 +29,25 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          pip install cython buildozer huggingface-hub
-
-      - name: Download 0.5B model
-        run: |
-          python -c "
-          from huggingface_hub import snapshot_download
-          snapshot_download(
-            repo_id='Qwen/Qwen2.5-0.5B-Instruct',
-            local_dir='./models/Qwen/Qwen2.5-0.5B-Instruct',
-            endpoint='https://hf-mirror.com',
-            resume_download=True
-          )
-          "
-          echo "Model downloaded"
-          ls -la models/Qwen/Qwen2.5-0.5B-Instruct/
+          pip install cython buildozer
 
       - name: Build APK
         run: |
-          # 创建目录
-          mkdir -p .buildozer/android/platform
-          mkdir -p /home/runner/.buildozer/android/platform
-
-          # 删除 Buildozer 可能下载的 SDK
-          rm -rf .buildozer/android/platform/android-sdk
-          rm -rf /home/runner/.buildozer/android/platform/android-sdk
-
-          # 创建软链接指向系统 SDK
-          ln -sf /usr/local/lib/android/sdk .buildozer/android/platform/android-sdk
-          ln -sf /usr/local/lib/android/sdk /home/runner/.buildozer/android/platform/android-sdk
-
           buildozer init
           cat >> buildozer.spec << 'EOF'
           android.accept_sdk_license = True
           android.ndk = 23b
           android.sdk = 30
-          android.sdk_path = /usr/local/lib/android/sdk
-          android.ndk_path = /usr/local/lib/android/sdk/ndk/23b
           EOF
-          sed -i 's/requirements = python3,kivy/requirements = python3,kivy==2.3.0,kivymd==1.2.0,requests,protobuf,sentencepiece,torch,transformers,huggingface-hub/' buildozer.spec
+          # 修改 requirements（只需要 requests，不需要 torch/transformers）
+          sed -i 's/requirements = python3,kivy/requirements = python3,kivy==2.3.0,kivymd==1.2.0,requests/' buildozer.spec
           sed -i 's/# android.permissions =/android.permissions = INTERNET/' buildozer.spec
+          sed -i 's/# android.api =/android.api = 30/' buildozer.spec
+          sed -i 's/# android.minapi =/android.minapi = 21/' buildozer.spec
           sed -i 's/orientation = landscape/orientation = portrait/' buildozer.spec
           buildozer -v android debug
         env:
           HOME: /home/runner
-          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
-          ANDROID_HOME: /usr/local/lib/android/sdk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
