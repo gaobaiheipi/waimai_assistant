@@ -45,20 +45,48 @@ jobs:
           echo "Model downloaded"
           ls -la models/Qwen/Qwen2.5-0.5B-Instruct/
 
+      - name: Install Android SDK and Build Tools
+        run: |
+          # 下载 Android SDK command line tools
+          wget https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          unzip commandlinetools-linux-11076708_latest.zip
+          mkdir -p android-sdk/cmdline-tools
+          mv cmdline-tools android-sdk/cmdline-tools/latest
+          export ANDROID_SDK_ROOT=$PWD/android-sdk
+          export PATH=$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin
+          # 接受许可证
+          yes | sdkmanager --licenses
+          # 安装必要的组件（包含 aidl）
+          sdkmanager "platform-tools"
+          sdkmanager "platforms;android-30"
+          sdkmanager "build-tools;30.0.3"
+          sdkmanager "build-tools;33.0.0"
+          # 验证 aidl 是否安装
+          ls -la $ANDROID_SDK_ROOT/build-tools/
+        env:
+          ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
+
       - name: Build APK
         run: |
+          export ANDROID_SDK_ROOT=$PWD/android-sdk
+          export PATH=$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/build-tools/30.0.3
           buildozer init
           cat >> buildozer.spec << 'EOF'
           android.accept_sdk_license = True
           android.ndk = 23b
+          android.sdk_path = $ANDROID_SDK_ROOT
           android.sdk = 30
+          android.ndk_api = 21
           EOF
           sed -i 's/requirements = python3,kivy/requirements = python3,kivy==2.3.0,kivymd==1.2.0,requests,protobuf,sentencepiece,torch,transformers,huggingface-hub/' buildozer.spec
           sed -i 's/# android.permissions =/android.permissions = INTERNET/' buildozer.spec
           sed -i 's/orientation = landscape/orientation = portrait/' buildozer.spec
+          # 确保 build-tools 路径正确
+          sed -i "s|# android.sdk_path =|android.sdk_path = $ANDROID_SDK_ROOT|" buildozer.spec
           buildozer -v android debug
         env:
           HOME: /home/runner
+          ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
