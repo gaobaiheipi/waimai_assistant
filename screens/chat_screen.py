@@ -91,23 +91,24 @@ class ChatScreen(MDScreen):
 
     def _check_model(self):
         """检查并加载模型"""
-        self._show_loading_dialog("正在初始化 AI 模型...")
-        self._add_system_message("AI模型准备中，首次使用会自动下载（约350MB）")
+        self._show_loading_dialog("正在初始化...")
+
+        # 显示当前模式
+        mode = "云端模式" if self.qwen.mode == 'cloud' else "本地模式"
+        self._add_system_message(f"当前使用{mode}")
 
         def on_loaded(success, msg):
             def update_ui(dt):
                 self._dismiss_loading_dialog()
                 if success:
                     self.is_model_ready = True
-                    status = "双模型" if "双" in msg else "单模型(0.5B)"
-                    self._add_system_message(f"AI 助手已就绪 [{status}]")
-
+                    self._add_system_message(f"AI 助手已就绪 [{msg}]")
                     if self._pending_message:
                         pending = self._pending_message
                         self._pending_message = None
                         self.send_message(pending)
                 else:
-                    self._add_system_message("模型加载失败：" + msg)
+                    self._add_system_message("初始化失败：" + msg)
 
             Clock.schedule_once(update_ui, 0)
 
