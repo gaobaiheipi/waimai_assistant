@@ -1,0 +1,597 @@
+#:kivy 2.3.0
+#:import dp kivy.metrics.dp
+#:import MDTopAppBar kivymd.uix.toolbar.MDTopAppBar
+
+<HomeScreen>:
+    MDBoxLayout:
+        orientation: "vertical"
+        md_bg_color: app.theme_cls.bg_light
+
+        MDTopAppBar:
+            title: "智能外卖助手"
+            elevation: 10
+            md_bg_color: app.theme_cls.primary_color
+            left_action_items: [["account", lambda x: root.go_preferences()]]
+            right_action_items: [["history", lambda x: root.view_history()]]
+
+        MDBoxLayout:
+            orientation: "vertical"
+            padding: dp(24)
+            spacing: dp(20)
+
+            MDLabel:
+                id: welcome_label
+                text: "今天想吃什么？"
+                font_style: "H5"
+                halign: "center"
+                size_hint_y: None
+                height: self.texture_size[1]
+
+            MDCard:
+                orientation: "vertical"
+                size_hint: 1, None
+                height: dp(200)
+                padding: dp(16)
+                radius: [dp(20)]
+                elevation: 2
+
+                MDTextField:
+                    id: order_input
+                    hint_text: "例如：帮我点一份20元左右的麻辣烫，不要香菜"
+                    helper_text: "支持自然语言描述"
+                    helper_text_mode: "persistent"
+                    multiline: True
+                    max_height: dp(120)
+                    mode: "rectangle"  # 修复：使用 rectangle 而不是 outlined
+                    font_size: dp(16)
+
+                Widget:
+                    size_hint_y: 1
+
+            MDRaisedButton:
+                id: submit_btn
+                text: "开始智能点餐"
+                font_size: dp(18)
+                size_hint: 1, None
+                height: dp(56)
+                md_bg_color: app.theme_cls.primary_color
+                on_release: root.submit_order()
+
+            MDLabel:
+                id: tip_label
+                text: "提示：可以直接说预算、口味偏好、忌口等要求"
+                font_style: "Caption"
+                theme_text_color: "Secondary"
+                halign: "center"
+                size_hint_y: None
+
+            Widget:
+                size_hint_y: 1
+
+<ChatScreen>:
+    name: "chat"
+
+    MDBoxLayout:
+        orientation: "vertical"
+
+        MDTopAppBar:
+            title: "AI 外卖助手"
+            left_action_items: [["arrow-left", lambda x: root.go_back()]]
+            right_action_items: [["history", lambda x: root.view_orders()], ["delete", lambda x: root.clear_chat()], ["food", lambda x: root.quick_recommend()]]
+
+        ScrollView:
+            id: chat_scroll
+            do_scroll_x: False
+
+            MDBoxLayout:
+                id: chat_list
+                orientation: "vertical"
+                size_hint_y: None
+                height: self.minimum_height
+                padding: dp(10)
+                spacing: dp(10)
+
+        MDBoxLayout:
+            size_hint_y: None
+            height: dp(60)
+            padding: dp(10)
+            spacing: dp(10)
+
+            MDTextField:
+                id: chat_input
+                hint_text: "输入需求，如：想吃辣的，预算30元..."
+                multiline: False
+                on_text_validate: root.send_message()
+
+            MDIconButton:
+                icon: "send"
+                on_release: root.send_message()
+                theme_icon_color: "Primary"
+
+<OrderScreen>:
+    MDBoxLayout:
+        orientation: "vertical"
+
+        MDTopAppBar:
+            title: "订单历史"
+            elevation: 10
+            md_bg_color: app.theme_cls.primary_color
+            left_action_items: [["arrow-left", lambda x: root.go_home()]]
+            right_action_items: [["refresh", lambda x: root.load_orders()]]
+
+        # 使用相对布局让提示居中
+        RelativeLayout:
+            MDScrollView:
+                id: scroll_view
+
+                MDList:
+                    id: orders_list
+                    padding: dp(8)
+
+            # 无订单提示 - 居中显示
+            MDLabel:
+                id: empty_label
+                text: "暂无订单"
+                halign: "center"
+                valign: "center"
+                theme_text_color: "Secondary"
+                font_style: "H6"
+                size_hint: (1, 1)
+                pos_hint: {"center_x": 0.5, "center_y": 0.5}
+
+<LoginScreen>:
+    MDBoxLayout:
+        orientation: "vertical"
+
+        MDTopAppBar:
+            title: "账号登录" if not root.show_register else "注册账号"
+            elevation: 0
+            right_action_items: [["swap-horizontal", lambda x: root.toggle_mode()]]
+
+        MDScrollView:
+
+            MDBoxLayout:
+                orientation: "vertical"
+                padding: dp(24)
+                spacing: dp(20)
+                size_hint_y: None
+                height: self.minimum_height
+
+                Widget:
+                    size_hint_y: None
+                    height: dp(20)
+
+                MDLabel:
+                    text: "智能外卖助手"
+                    font_style: "H4"
+                    halign: "center"
+                    size_hint_y: None
+
+                MDLabel:
+                    text: root.status_text
+                    font_style: "Caption"
+                    halign: "center"
+                    theme_text_color: "Secondary"
+                    size_hint_y: None
+
+                Widget:
+                    size_hint_y: None
+                    height: dp(10)
+
+                MDBoxLayout:
+                    orientation: "vertical"
+                    spacing: dp(16)
+                    size_hint_y: None
+                    height: dp(200) if not root.show_register else 0
+                    opacity: 1 if not root.show_register else 0
+                    disabled: root.show_register
+
+                    MDTextField:
+                        id: login_phone
+                        mode: "rectangle"  # 修复
+                        input_filter: "int"
+                        max_text_length: 11
+                        hint_text: "手机号"
+
+                    MDTextField:
+                        id: login_password
+                        mode: "rectangle"  # 修复
+                        password: True
+                        hint_text: "密码"
+
+                    MDRaisedButton:
+                        text: "登 录"
+                        font_size: dp(16)
+                        size_hint: 1, None
+                        height: dp(48)
+                        md_bg_color: app.theme_cls.primary_color
+                        on_release: root.do_login()
+
+                    MDFlatButton:
+                        text: "游客模式（无需注册）"
+                        size_hint: 1, None
+                        height: dp(40)
+                        on_release: root.guest_login()
+
+                MDBoxLayout:
+                    orientation: "vertical"
+                    spacing: dp(12)
+                    size_hint_y: None
+                    height: dp(280) if root.show_register else 0
+                    opacity: 1 if root.show_register else 0
+                    disabled: not root.show_register
+
+                    MDTextField:
+                        id: reg_phone
+                        mode: "rectangle"  # 修复
+                        input_filter: "int"
+                        max_text_length: 11
+                        hint_text: "手机号（作为账号）"
+
+                    MDTextField:
+                        id: reg_nickname
+                        mode: "rectangle"  # 修复
+                        hint_text: "昵称（可选）"
+
+                    MDTextField:
+                        id: reg_password
+                        mode: "rectangle"  # 修复
+                        password: True
+                        hint_text: "密码（至少6位）"
+
+                    MDTextField:
+                        id: reg_password2
+                        mode: "rectangle"  # 修复
+                        password: True
+                        hint_text: "确认密码"
+
+                    MDRaisedButton:
+                        text: "注 册"
+                        font_size: dp(16)
+                        size_hint: 1, None
+                        height: dp(48)
+                        md_bg_color: app.theme_cls.primary_color
+                        on_release: root.do_register()
+
+                    MDFlatButton:
+                        text: "已有账号？去登录"
+                        size_hint: 1, None
+                        height: dp(40)
+                        on_release: root.toggle_mode()
+
+                Widget:
+                    size_hint_y: None
+                    height: dp(40)
+
+                MDLabel:
+                    text: "点击右上角图标切换登录/注册" if not root.show_register else ""
+                    font_style: "Caption"
+                    halign: "center"
+                    theme_text_color: "Hint"
+                    size_hint_y: None
+
+<PreferencesScreen>:
+    MDBoxLayout:
+        orientation: "vertical"
+
+        MDTopAppBar:
+            title: "偏好设置"
+            left_action_items: [["arrow-left", lambda x: root.go_home()]]
+            right_action_items: [["content-save", lambda x: root.save_preferences()]]
+
+        MDScrollView:
+
+            MDBoxLayout:
+                orientation: "vertical"
+                padding: dp(16)
+                spacing: dp(16)
+                size_hint_y: None
+                height: self.minimum_height
+
+                Widget:
+                    size_hint_y: 0.1
+
+                MDCard:
+                    orientation: "vertical"
+                    padding: dp(16)
+                    size_hint: 1, None
+                    height: dp(100)
+                    radius: [dp(12)]
+
+                    MDLabel:
+                        id: nickname_label
+                        text: "当前用户：游客"
+                        font_style: "H6"
+                        size_hint_y: None
+
+                    MDLabel:
+                        text: "游客模式：设置仅本次有效" if app.user_session.is_guest else "已登录：设置自动保存"
+                        font_style: "Caption"
+                        theme_text_color: "Secondary"
+                        size_hint_y: None
+
+                MDLabel:
+                    text: "默认预算（元）"
+                    font_style: "Subtitle1"
+                    size_hint_y: None
+
+                MDTextField:
+                    id: budget_input
+                    mode: "rectangle"  # 修复
+                    input_filter: "int"
+                    text: root.budget_text
+                    hint_text: "每次点餐的默认预算"
+                    helper_text: "范围：10-500元"
+                    helper_text_mode: "persistent"
+
+                MDLabel:
+                    text: "辣度偏好"
+                    font_style: "Subtitle1"
+                    size_hint_y: None
+
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    size_hint_y: None
+                    height: dp(48)
+                    spacing: dp(8)
+
+                    MDRaisedButton:
+                        id: btn_bula
+                        text: "不辣"
+                        size_hint_x: 1
+                        md_bg_color: app.theme_cls.primary_color if root.spicy_level == "不辣" else (0.8, 0.8, 0.8, 1)
+                        on_release: root.select_spicy("不辣")
+
+                    MDRaisedButton:
+                        id: btn_weila
+                        text: "微辣"
+                        size_hint_x: 1
+                        md_bg_color: app.theme_cls.primary_color if root.spicy_level == "微辣" else (0.8, 0.8, 0.8, 1)
+                        on_release: root.select_spicy("微辣")
+
+                    MDRaisedButton:
+                        id: btn_zhongla
+                        text: "中辣"
+                        size_hint_x: 1
+                        md_bg_color: app.theme_cls.primary_color if root.spicy_level == "中辣" else (0.8, 0.8, 0.8, 1)
+                        on_release: root.select_spicy("中辣")
+
+                    MDRaisedButton:
+                        id: btn_tela
+                        text: "特辣"
+                        size_hint_x: 1
+                        md_bg_color: app.theme_cls.primary_color if root.spicy_level == "特辣" else (0.8, 0.8, 0.8, 1)
+                        on_release: root.select_spicy("特辣")
+
+                MDLabel:
+                    text: "忌口食物"
+                    font_style: "Subtitle1"
+                    size_hint_y: None
+
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    size_hint_y: None
+                    height: dp(56)
+                    spacing: dp(8)
+
+                    MDTextField:
+                        id: avoid_input
+                        mode: "rectangle"  # 修复
+                        size_hint_x: 0.7
+                        hint_text: "如：香菜、花生、葱"
+
+                    MDRaisedButton:
+                        text: "添加"
+                        size_hint_x: 0.3
+                        on_release: root.add_avoid_food()
+
+                MDList:
+                    id: avoid_list
+                    size_hint_y: None
+                    height: dp(150)
+
+                MDLabel:
+                    text: "默认配送地址"
+                    font_style: "Subtitle1"
+                    size_hint_y: None
+
+                MDTextField:
+                    id: address_input
+                    mode: "rectangle"  # 修复
+                    multiline: True
+                    max_height: dp(100)
+                    hint_text: "省市区 + 详细地址"
+
+                MDRaisedButton:
+                    text: "修改密码"
+                    size_hint: 1, None
+                    height: dp(48)
+                    on_release: root.show_change_password()
+                    disabled: root.user_session.is_guest if hasattr(root, 'user_session') else True
+
+                MDFlatButton:
+                    text: "退出登录"
+                    size_hint: 1, None
+                    height: dp(48)
+                    md_bg_color: 0.9, 0.3, 0.3, 0.1
+                    on_release: root.logout()
+
+                Widget:
+                    size_hint_y: None
+                    height: dp(32)
+
+<TrackingScreen>:
+    name: "tracking"
+
+    MDBoxLayout:
+        orientation: "vertical"
+
+        MDTopAppBar:
+            title: "订单追踪"
+            elevation: 5
+            md_bg_color: app.theme_cls.primary_color
+            left_action_items: [["arrow-left", lambda x: root.go_back()]]
+            right_action_items: [["refresh", lambda x: root._load_tracking_info()]]
+
+        MDScrollView:
+
+            MDBoxLayout:
+                orientation: "vertical"
+                padding: dp(20)
+                spacing: dp(20)
+                size_hint_y: None
+                height: self.minimum_height
+
+                # 订单号卡片
+                MDCard:
+                    orientation: "vertical"
+                    padding: dp(16)
+                    size_hint: 1, None
+                    height: dp(80)
+                    radius: [dp(12)]
+                    elevation: 2
+
+                    MDLabel:
+                        text: "订单号"
+                        font_style: "Caption"
+                        theme_text_color: "Secondary"
+                        size_hint_y: None
+                        height: dp(20)
+
+                    MDLabel:
+                        text: root.order_id
+                        font_style: "H6"
+                        bold: True
+                        size_hint_y: None
+                        height: dp(36)
+
+                # 进度条卡片
+                MDCard:
+                    orientation: "vertical"
+                    padding: dp(16)
+                    size_hint: 1, None
+                    height: dp(150)
+                    radius: [ dp(12) ]
+                    elevation: 2
+
+                    MDLabel:
+                        text: "配送进度"
+                        font_style: "Subtitle1"
+                        size_hint_y: None
+                        height: dp(30)
+
+                    MDProgressBar:
+                        id: progress_bar
+                        value: root.progress_value
+                        size_hint_x: 1
+                        height: dp(8)
+                        color: app.theme_cls.primary_color
+
+                    MDBoxLayout:
+                        orientation: "horizontal"
+                        size_hint_y: None
+                        height: dp(30)
+                        spacing: dp(8)
+
+                        MDLabel:
+                            text: "已下单"
+                            theme_text_color: "Secondary"
+                            font_size: dp(10)
+                            size_hint_x: 0.2
+                            halign: "center"
+
+                        MDLabel:
+                            text: "商家接单"
+                            theme_text_color: "Secondary"
+                            font_size: dp(10)
+                            size_hint_x: 0.2
+                            halign: "center"
+
+                        MDLabel:
+                            text: "配送中"
+                            theme_text_color: "Secondary"
+                            font_size: dp(10)
+                            size_hint_x: 0.2
+                            halign: "center"
+
+                        MDLabel:
+                            text: "即将送达"
+                            theme_text_color: "Secondary"
+                            font_size: dp(10)
+                            size_hint_x: 0.2
+                            halign: "center"
+
+                        MDLabel:
+                            text: "已送达"
+                            theme_text_color: "Secondary"
+                            font_size: dp(10)
+                            size_hint_x: 0.2
+                            halign: "center"
+
+                    MDLabel:
+                        text: root.status_text
+                        font_style: "Body1"
+                        halign: "center"
+                        size_hint_y: None
+                        height: dp(36)
+                        theme_text_color: "Primary"
+                        bold: True
+
+                # 骑手信息卡片
+                MDCard:
+                    orientation: "vertical"
+                    padding: dp(16)
+                    size_hint: 1, None
+                    height: dp(160)
+                    radius: [dp(12)]
+                    elevation: 2
+
+                    MDLabel:
+                        text: "骑手信息"
+                        font_style: "Subtitle1"
+                        size_hint_y: None
+                        height: dp(30)
+
+                    MDLabel:
+                        text: root.rider_info
+                        size_hint_y: None
+                        height: dp(70)
+                        font_size: dp(14)
+                        theme_text_color: "Primary"
+
+                    MDRaisedButton:
+                        text: "联系骑手"
+                        size_hint_x: 0.5
+                        pos_hint: {"center_x": 0.5}
+                        height: dp(40)
+                        font_size: dp(14)
+                        on_release: root.call_rider()
+                        disabled: not root.rider_phone
+
+                # 预计送达时间卡片
+                MDCard:
+                    orientation: "vertical"
+                    padding: dp(16)
+                    size_hint: 1, None
+                    height: dp(100)
+                    radius: [dp(12)]
+                    elevation: 2
+
+                    MDLabel:
+                        text: "预计送达时间"
+                        font_style: "Subtitle1"
+                        size_hint_y: None
+                        height: dp(30)
+
+                    MDLabel:
+                        text: root.eta_text
+                        font_style: "H5"
+                        size_hint_y: None
+                        height: dp(50)
+                        halign: "center"
+                        theme_text_color: "Primary"
+                        bold: True
+
+                Widget:
+                    size_hint_y: None
+                    height: dp(20)
