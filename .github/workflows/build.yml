@@ -45,33 +45,24 @@ jobs:
           echo "Model downloaded"
           ls -la models/Qwen/Qwen2.5-0.5B-Instruct/
 
-      - name: Setup Android SDK
-        run: |
-          # 清理系统默认 SDK 路径
-          export ANDROID_SDK_ROOT=$HOME/android-sdk
-          export ANDROID_HOME=$HOME/android-sdk
-          mkdir -p $ANDROID_SDK_ROOT/cmdline-tools/latest
-          cd $ANDROID_SDK_ROOT/cmdline-tools/latest
-          wget https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-          unzip -q commandlinetools-linux-11076708_latest.zip
-          rm commandlinetools-linux-11076708_latest.zip
-          mv cmdline-tools/* .
-          rmdir cmdline-tools
-          export PATH=$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin
-          yes | sdkmanager --licenses
-          sdkmanager "platform-tools" "platforms;android-30" "build-tools;30.0.3"
-
       - name: Build APK
         run: |
-          export ANDROID_SDK_ROOT=$HOME/android-sdk
-          export ANDROID_HOME=$HOME/android-sdk
-          export PATH=$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin
+          # 删除 Buildozer 自己下载的 SDK，强制使用系统 SDK
+          rm -rf .buildozer/android/platform/android-sdk
+          rm -rf /home/runner/.buildozer/android/platform/android-sdk
+
+          # 创建软链接指向系统 SDK
+          mkdir -p .buildozer/android/platform
+          ln -sf /usr/local/lib/android/sdk .buildozer/android/platform/android-sdk
+          ln -sf /usr/local/lib/android/sdk /home/runner/.buildozer/android/platform/android-sdk
+
           buildozer init
           cat >> buildozer.spec << 'EOF'
           android.accept_sdk_license = True
           android.ndk = 23b
           android.sdk = 30
-          android.sdk_path = $HOME/android-sdk
+          android.sdk_path = /usr/local/lib/android/sdk
+          android.ndk_path = /usr/local/lib/android/sdk/ndk/23b
           EOF
           sed -i 's/requirements = python3,kivy/requirements = python3,kivy==2.3.0,kivymd==1.2.0,requests,protobuf,sentencepiece,torch,transformers,huggingface-hub/' buildozer.spec
           sed -i 's/# android.permissions =/android.permissions = INTERNET/' buildozer.spec
@@ -79,8 +70,8 @@ jobs:
           buildozer -v android debug
         env:
           HOME: /home/runner
-          ANDROID_SDK_ROOT: /home/runner/android-sdk
-          ANDROID_HOME: /home/runner/android-sdk
+          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+          ANDROID_HOME: /usr/local/lib/android/sdk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
