@@ -45,8 +45,26 @@ jobs:
           echo "Model downloaded"
           ls -la models/Qwen/Qwen2.5-0.5B-Instruct/
 
+      - name: Install Android SDK and build-tools
+        run: |
+          mkdir -p /home/runner/android-sdk/cmdline-tools
+          cd /home/runner/android-sdk/cmdline-tools
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          unzip -q commandlinetools-linux-11076708_latest.zip
+          mv cmdline-tools latest
+          rm commandlinetools-linux-11076708_latest.zip
+          export ANDROID_SDK_ROOT=/home/runner/android-sdk
+          export PATH=$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin
+          yes | sdkmanager "build-tools;30.0.3"
+          yes | sdkmanager "platforms;android-30"
+          yes | sdkmanager --licenses || true
+        env:
+          ANDROID_SDK_ROOT: /home/runner/android-sdk
+
       - name: Build APK
         run: |
+          export ANDROID_SDK_ROOT=/home/runner/android-sdk
+          export PATH=$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin
           buildozer init
           sed -i 's/requirements = python3,kivy/requirements = python3,kivy==2.3.0,kivymd==1.2.0,requests,protobuf,sentencepiece,torch,transformers,huggingface-hub/' buildozer.spec
           sed -i 's/# android.permissions =/android.permissions = INTERNET/' buildozer.spec
@@ -54,9 +72,11 @@ jobs:
           sed -i 's/# android.minapi =/android.minapi = 21/' buildozer.spec
           sed -i 's/orientation = landscape/orientation = portrait/' buildozer.spec
           echo "android.accept_sdk_license = True" >> buildozer.spec
+          echo "android.sdk_path = /home/runner/android-sdk" >> buildozer.spec
           buildozer -v android debug
         env:
           HOME: /home/runner
+          ANDROID_SDK_ROOT: /home/runner/android-sdk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
