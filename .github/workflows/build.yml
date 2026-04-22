@@ -45,34 +45,33 @@ jobs:
           echo "Model downloaded"
           ls -la models/Qwen/Qwen2.5-0.5B-Instruct/
 
-      - name: Install Android SDK
+      - name: Setup Android SDK
         run: |
-          mkdir -p /home/runner/.buildozer/android/platform/android-sdk/cmdline-tools/latest
-          cd /home/runner/.buildozer/android/platform/android-sdk/cmdline-tools/latest
+          # 清理系统默认 SDK 路径
+          export ANDROID_SDK_ROOT=$HOME/android-sdk
+          export ANDROID_HOME=$HOME/android-sdk
+          mkdir -p $ANDROID_SDK_ROOT/cmdline-tools/latest
+          cd $ANDROID_SDK_ROOT/cmdline-tools/latest
           wget https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
           unzip -q commandlinetools-linux-11076708_latest.zip
           rm commandlinetools-linux-11076708_latest.zip
           mv cmdline-tools/* .
           rmdir cmdline-tools
-          export PATH=$PATH:$PWD/bin
+          export PATH=$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin
           yes | sdkmanager --licenses
           sdkmanager "platform-tools" "platforms;android-30" "build-tools;30.0.3"
-          # 创建软链接让 buildozer 能找到
-          cd /home/runner/.buildozer/android/platform/android-sdk
-          ln -s cmdline-tools/latest tools
-        env:
-          ANDROID_SDK_ROOT: /home/runner/.buildozer/android/platform/android-sdk
 
       - name: Build APK
         run: |
-          export ANDROID_SDK_ROOT=/home/runner/.buildozer/android/platform/android-sdk
+          export ANDROID_SDK_ROOT=$HOME/android-sdk
+          export ANDROID_HOME=$HOME/android-sdk
           export PATH=$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin
           buildozer init
           cat >> buildozer.spec << 'EOF'
           android.accept_sdk_license = True
           android.ndk = 23b
           android.sdk = 30
-          android.sdk_path = /home/runner/.buildozer/android/platform/android-sdk
+          android.sdk_path = $HOME/android-sdk
           EOF
           sed -i 's/requirements = python3,kivy/requirements = python3,kivy==2.3.0,kivymd==1.2.0,requests,protobuf,sentencepiece,torch,transformers,huggingface-hub/' buildozer.spec
           sed -i 's/# android.permissions =/android.permissions = INTERNET/' buildozer.spec
@@ -80,6 +79,8 @@ jobs:
           buildozer -v android debug
         env:
           HOME: /home/runner
+          ANDROID_SDK_ROOT: /home/runner/android-sdk
+          ANDROID_HOME: /home/runner/android-sdk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
