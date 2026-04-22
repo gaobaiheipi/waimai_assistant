@@ -47,12 +47,15 @@ jobs:
 
       - name: Build APK
         run: |
-          # 删除 Buildozer 自己下载的 SDK，强制使用系统 SDK
+          # 创建目录
+          mkdir -p .buildozer/android/platform
+          mkdir -p /home/runner/.buildozer/android/platform
+
+          # 删除 Buildozer 可能下载的 SDK
           rm -rf .buildozer/android/platform/android-sdk
           rm -rf /home/runner/.buildozer/android/platform/android-sdk
 
           # 创建软链接指向系统 SDK
-          mkdir -p .buildozer/android/platform
           ln -sf /usr/local/lib/android/sdk .buildozer/android/platform/android-sdk
           ln -sf /usr/local/lib/android/sdk /home/runner/.buildozer/android/platform/android-sdk
 
