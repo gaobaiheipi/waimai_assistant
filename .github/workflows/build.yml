@@ -2,7 +2,7 @@ name: Build APK
 
 on:
   push:
-    branches: [ main ]
+    branches: [ master ]
   workflow_dispatch:
 
 jobs:
@@ -25,24 +25,52 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt update
-          sudo apt install -y git zip unzip autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev
+          sudo apt install -y git zip unzip openjdk-17-jdk python3-pip autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo6 cmake libffi-dev libssl-dev
 
       - name: Install Python dependencies
         run: |
-          pip install cython buildozer
+          pip install cython buildozer modelscope
+
+      - name: Accept Android SDK licenses
+        run: |
+          mkdir -p /home/runner/.android
+          echo -e "count=1\nsrc=5a58a3e75c46a042a1ecc1a9e772a92e4a8863e734e3bb584a5d6f885f08c7e9" > /home/runner/.android/repositories.cfg
+          yes | sdkmanager --licenses || true
+        env:
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+
+      - name: Download 0.5B model from Aliyun mirror
+        run: |
+          mkdir -p models/Qwen/Qwen2.5-0.5B-Instruct
+          cd models/Qwen/Qwen2.5-0.5B-Instruct
+          
+          wget -q https://modelscope.oss-cn-beijing.aliyuncs.com/qwen/Qwen2.5-0.5B-Instruct/model.safetensors
+          wget -q https://modelscope.oss-cn-beijing.aliyuncs.com/qwen/Qwen2.5-0.5B-Instruct/config.json
+          wget -q https://modelscope.oss-cn-beijing.aliyuncs.com/qwen/Qwen2.5-0.5B-Instruct/tokenizer.json
+          wget -q https://modelscope.oss-cn-beijing.aliyuncs.com/qwen/Qwen2.5-0.5B-Instruct/tokenizer_config.json
+          wget -q https://modelscope.oss-cn-beijing.aliyuncs.com/qwen/Qwen2.5-0.5B-Instruct/vocab.json
+          wget -q https://modelscope.oss-cn-beijing.aliyuncs.com/qwen/Qwen2.5-0.5B-Instruct/merges.txt
+          wget -q https://modelscope.oss-cn-beijing.aliyuncs.com/qwen/Qwen2.5-0.5B-Instruct/generation_config.json
+          
+          echo "Download complete"
+          ls -la
 
       - name: Build APK
         run: |
           buildozer init
-          # 修改配置（排除模型文件）
-          sed -i 's/requirements = python3,kivy/requirements = python3,kivy==2.3.0,kivymd==1.2.0,requests/' buildozer.spec
+          sed -i 's/requirements = python3,kivy/requirements = python3,kivy==2.3.0,kivymd==1.2.0,requests,protobuf,sentencepiece,torch,transformers/' buildozer.spec
           sed -i 's/# android.permissions =/android.permissions = INTERNET/' buildozer.spec
           sed -i 's/# android.api =/android.api = 30/' buildozer.spec
           sed -i 's/# android.minapi =/android.minapi = 21/' buildozer.spec
           sed -i 's/orientation = landscape/orientation = portrait/' buildozer.spec
+          sed -i 's/# android.ndk =/android.ndk = 23b/' buildozer.spec
+          sed -i 's/# android.ndk_api =/android.ndk_api = 21/' buildozer.spec
+          # 自动接受 SDK 许可证
+          echo "android.accept_sdk_license = True" >> buildozer.spec
           buildozer -v android debug
         env:
           HOME: /home/runner
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
