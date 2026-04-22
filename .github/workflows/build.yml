@@ -31,7 +31,7 @@ jobs:
         run: |
           pip install cython buildozer huggingface-hub
 
-      - name: Install Android SDK command line tools
+      - name: Install Android SDK and build-tools
         run: |
           mkdir -p /home/runner/android-sdk/cmdline-tools
           cd /home/runner/android-sdk/cmdline-tools
@@ -39,6 +39,12 @@ jobs:
           unzip -q commandlinetools-linux-11076708_latest.zip
           mv cmdline-tools latest
           rm commandlinetools-linux-11076708_latest.zip
+          
+          # 安装 build-tools
+          export ANDROID_SDK_ROOT=/home/runner/android-sdk
+          export PATH=$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin
+          yes | sdkmanager "build-tools;30.0.3"
+          yes | sdkmanager "platforms;android-30"
         env:
           ANDROID_SDK_ROOT: /home/runner/android-sdk
 
@@ -78,6 +84,7 @@ jobs:
           sed -i 's/# android.ndk_api =/android.ndk_api = 21/' buildozer.spec
           echo "android.accept_sdk_license = True" >> buildozer.spec
           echo "android.sdk_path = /home/runner/android-sdk" >> buildozer.spec
+          echo "android.ndk_path = /home/runner/.buildozer/android/platform/android-ndk-r25c" >> buildozer.spec
           buildozer -v android debug
         env:
           HOME: /home/runner
