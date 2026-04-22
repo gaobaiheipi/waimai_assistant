@@ -47,9 +47,8 @@ jobs:
 
       - name: Install Android SDK
         run: |
-          cd /home/runner/.buildozer/android/platform/
-          mkdir -p android-sdk
-          cd android-sdk
+          mkdir -p /home/runner/.buildozer/android/platform/android-sdk
+          cd /home/runner/.buildozer/android/platform/android-sdk
           wget https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
           unzip -q commandlinetools-linux-11076708_latest.zip
           rm commandlinetools-linux-11076708_latest.zip
