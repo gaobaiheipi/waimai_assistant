@@ -39,9 +39,9 @@ jobs:
           docker run --rm \
             -v $PWD:/app \
             -v $HOME/.buildozer:/home/user/.buildozer \
-            -e FORCE_ROOT=1 \
+            -w /app \
             kivy/buildozer:latest \
-            bash -c "echo y | buildozer -v android debug"
+            bash -c "echo 'y' | buildozer -v android debug"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
