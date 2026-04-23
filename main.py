@@ -31,7 +31,9 @@ if chinese_font:
     from kivy.config import Config
     Config.set('kivy', 'default_font', ['Roboto', chinese_font])
 
-Window.size = (375, 812)
+if sys.platform == 'win32':
+    from kivy.core.window import Window
+    Window.size = (375, 812)
 
 from screens.login_screen import LoginScreen
 from screens.home_screen import HomeScreen
@@ -57,6 +59,11 @@ class WaimaiApp(MDApp):
     user_avoid = ListProperty([])
 
     def build(self):
+        # Android 屏幕适配
+        if sys.platform == 'android':
+            from kivy.core.window import Window
+            # 获取实际屏幕大小
+            Window.size = (Window.width, Window.height)
         self.theme_cls.theme_style = "Light"
         self.theme_cls.primary_palette = "DeepOrange"
         self.theme_cls.accent_palette = "Orange"

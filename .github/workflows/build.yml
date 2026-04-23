@@ -34,6 +34,11 @@ jobs:
           android.accept_sdk_license = True
           log_level = 2
           warn_on_root = 1
+          
+          # 添加以下配置解决屏幕显示问题
+          android.gradle_dependencies = 'androidx.appcompat:appcompat:1.6.1'
+          android.apptheme = @android:style/Theme.NoTitleBar.Fullscreen
+          window.size = 0,0
           EOF
 
           docker run --rm \

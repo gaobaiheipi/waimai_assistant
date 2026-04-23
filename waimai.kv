@@ -2,7 +2,22 @@
 #:import dp kivy.metrics.dp
 #:import MDTopAppBar kivymd.uix.toolbar.MDTopAppBar
 
+<WaimaiManager>:
+    # 确保屏幕管理器填充整个窗口
+    canvas.before:
+        Color:
+            rgba: app.theme_cls.bg_light
+        Rectangle:
+            size: self.size
+            pos: self.pos
+
 <HomeScreen>:
+    canvas.before:
+        Color:
+            rgba: app.theme_cls.bg_light
+        Rectangle:
+            size: self.size
+            pos: self.pos
     MDBoxLayout:
         orientation: "vertical"
         md_bg_color: app.theme_cls.bg_light
@@ -69,6 +84,12 @@
                 size_hint_y: 1
 
 <ChatScreen>:
+    canvas.before:
+        Color:
+            rgba: app.theme_cls.bg_light
+        Rectangle:
+            size: self.size
+            pos: self.pos
     name: "chat"
 
     MDBoxLayout:
@@ -109,6 +130,12 @@
                 theme_icon_color: "Primary"
 
 <OrderScreen>:
+    canvas.before:
+        Color:
+            rgba: app.theme_cls.bg_light
+        Rectangle:
+            size: self.size
+            pos: self.pos
     MDBoxLayout:
         orientation: "vertical"
 
@@ -140,6 +167,12 @@
                 pos_hint: {"center_x": 0.5, "center_y": 0.5}
 
 <LoginScreen>:
+    canvas.before:
+        Color:
+            rgba: app.theme_cls.bg_light
+        Rectangle:
+            size: self.size
+            pos: self.pos
     MDBoxLayout:
         orientation: "vertical"
 
@@ -271,6 +304,12 @@
                     size_hint_y: None
 
 <PreferencesScreen>:
+    canvas.before:
+        Color:
+            rgba: app.theme_cls.bg_light
+        Rectangle:
+            size: self.size
+            pos: self.pos
     MDBoxLayout:
         orientation: "vertical"
 
@@ -421,6 +460,12 @@
                     height: dp(32)
 
 <TrackingScreen>:
+    canvas.before:
+        Color:
+            rgba: app.theme_cls.bg_light
+        Rectangle:
+            size: self.size
+            pos: self.pos
     name: "tracking"
 
     MDBoxLayout:
