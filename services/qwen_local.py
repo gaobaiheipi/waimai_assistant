@@ -3,9 +3,16 @@ import os
 import re
 import json
 import requests
+import random
 from typing import Dict, List, Callable, Optional
 from kivy.clock import Clock
 from kivy.utils import platform
+
+# 导入 mock 数据集
+import sys
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from data.mock_restaurants import get_recommendations, get_restaurant, RESTAURANTS, DISHES_BY_RESTAURANT
 
 
 class QwenRouterService:
@@ -182,6 +189,383 @@ class QwenRouterService:
             self.model_large = None
             return False
 
+    # ========== 工作流核心方法（从本地代码复制，保持不变） ==========
+
+    def _parse_user_intent(self, user_input: str) -> dict:
+        """解析用户意图，提取关键词、预算、菜系、辣度、忌口"""
+        result = {
+            "keyword": None,
+            "budget": None,
+            "cuisine": None,
+            "spicy": None,
+            "avoid": [],
+        }
+
+        # 提取预算
+        budget_match = re.search(r'(\d+)(?:元|块|块钱)', user_input)
+        if budget_match:
+            result["budget"] = int(budget_match.group(1))
+
+        price_range_match = re.search(r'(\d+)(?:元|块|块钱)(?:以下|以内|内|左右)', user_input)
+        if price_range_match:
+            result["budget"] = int(price_range_match.group(1))
+
+        # 菜系列表
+        cuisines = ["川菜", "粤菜", "湘菜", "东北菜", "日料", "韩餐", "西餐", "火锅", "小吃", "轻食",
+                    "西北菜", "东南亚", "港式", "清真", "新疆菜", "台湾菜", "京菜", "素食", "海鲜", "鲁菜", "甜品"]
+        for c in cuisines:
+            if c in user_input:
+                result["cuisine"] = c
+                break
+
+        # 提取关键词
+        temp_input = user_input
+        if result["cuisine"]:
+            temp_input = temp_input.replace(result["cuisine"], "")
+        if result["budget"]:
+            temp_input = re.sub(r'\d+元[以内内左右]?', '', temp_input)
+
+        food_match = re.search(r'(?:想吃|要吃|来一份|点|帮我点)([^，,。的]+)', temp_input)
+        if food_match:
+            keyword = food_match.group(1).strip()
+            stop_words = ["菜", "饭", "餐", "外卖", "一份", "左右", "以内", "内", "的", "吧", "啊", "哦"]
+            if keyword and len(keyword) <= 6 and keyword not in stop_words:
+                result["keyword"] = keyword
+
+        # 提取辣度
+        spicy_levels = ["特辣", "中辣", "微辣", "不辣"]
+        for s in spicy_levels:
+            if s in user_input:
+                result["spicy"] = s
+                break
+
+        # 提取忌口
+        avoid_match = re.search(r'不要([\u4e00-\u9fa5]{1,4})', user_input)
+        if avoid_match:
+            avoid_item = avoid_match.group(1)
+            if avoid_item and avoid_item not in ["吃", "放", "加", "要"]:
+                result["avoid"] = [avoid_item]
+
+        return result
+
+    def _filter_by_prefs(self, recommendations: list, budget: float, keyword: str = None,
+                         cuisine: str = None, spicy: str = None, avoid: list = None,
+                         exclude_ids: list = None) -> list:
+        """根据偏好过滤推荐列表"""
+        filtered = []
+        exclude_ids = exclude_ids or []
+
+        for rec in recommendations:
+            dish = rec["dish"]
+            restaurant = rec["restaurant"]
+
+            if dish["price"] > budget * 1.2:
+                continue
+            if avoid:
+                excluded = False
+                for a in avoid:
+                    if a in dish["name"]:
+                        excluded = True
+                        break
+                if excluded:
+                    continue
+            if cuisine and cuisine not in restaurant["cuisine"]:
+                continue
+            if keyword and keyword not in dish["name"]:
+                continue
+            if spicy:
+                dish_spicy = dish.get("spicy", "微辣")
+                if spicy == "不辣" and dish_spicy != "不辣":
+                    continue
+                elif spicy == "微辣" and dish_spicy not in ["不辣", "微辣"]:
+                    continue
+                elif spicy == "中辣" and dish_spicy not in ["微辣", "中辣"]:
+                    continue
+                elif spicy == "特辣" and dish_spicy not in ["中辣", "特辣", "麻辣"]:
+                    continue
+            if dish["id"] in exclude_ids:
+                continue
+            filtered.append(rec)
+
+        return filtered
+
+    def _get_all_dishes_with_restaurant(self) -> list:
+        """获取所有菜品（带餐厅信息）"""
+        all_items = []
+        for restaurant in RESTAURANTS:
+            dishes = DISHES_BY_RESTAURANT.get(restaurant["id"], [])
+            for dish in dishes:
+                all_items.append({
+                    "dish": dish,
+                    "restaurant": restaurant,
+                })
+        return all_items
+
+    def _get_recommendations_from_mock(self, budget: float, keyword: str = None,
+                                       cuisine: str = None, spicy: str = None,
+                                       avoid: list = None, exclude_ids: list = None) -> list:
+        """从 mock 数据集获取推荐"""
+        all_items = self._get_all_dishes_with_restaurant()
+
+        filtered = self._filter_by_prefs(
+            all_items, budget, keyword, cuisine, spicy, avoid, exclude_ids
+        )
+
+        filtered.sort(key=lambda x: x["restaurant"]["rating"], reverse=True)
+
+        return filtered[:5]
+
+    def _handle_recommend(self, user_input: str, user_prefs: dict) -> dict:
+        """处理推荐请求（全新推荐）"""
+        parsed = self._parse_user_intent(user_input)
+
+        budget = parsed["budget"] if parsed["budget"] is not None else user_prefs.get('default_budget', 30)
+        keyword = parsed["keyword"]
+        cuisine = parsed["cuisine"]
+        spicy = parsed["spicy"] if parsed["spicy"] is not None else user_prefs.get('spicy_level', '微辣')
+        avoid = parsed["avoid"] if parsed["avoid"] else user_prefs.get('avoid_foods', [])
+
+        print(f"[全新推荐] 预算: {budget}, 关键词: {keyword}, 菜系: {cuisine}, 辣度: {spicy}, 忌口: {avoid}")
+
+        self.conversation_context["last_search_params"] = {
+            "budget": budget,
+            "keyword": keyword,
+            "cuisine": cuisine,
+            "spicy": spicy,
+            "avoid": avoid.copy(),
+        }
+        self.conversation_context["recommended_ids"] = []
+
+        recommendations = self._get_recommendations_from_mock(budget, keyword, cuisine, spicy, avoid)
+
+        for rec in recommendations:
+            self.conversation_context["recommended_ids"].append(rec["dish"]["id"])
+
+        self.conversation_context["last_budget"] = budget
+        self.conversation_context["last_keyword"] = keyword
+        self.conversation_context["last_cuisine"] = cuisine
+        self.conversation_context["last_spicy"] = spicy
+        self.conversation_context["last_avoid"] = avoid.copy()
+        self.conversation_context["current_recommendations"] = recommendations
+
+        if not recommendations:
+            return {
+                "success": True,
+                "content": f"抱歉，在{budget}元预算内没有找到符合您需求的菜品。\n\n建议提高预算或放宽口味限制。",
+                "model": "mock",
+                "workflow": None
+            }
+
+        content = f"根据您的偏好（{spicy}口味，预算{budget}元），为您推荐：\n\n"
+        for i, rec in enumerate(recommendations[:3], 1):
+            dish = rec["dish"]
+            restaurant = rec["restaurant"]
+            content += f"{i}. {dish['name']} - {restaurant['name']}\n"
+            content += f"   评分{restaurant['rating']}分 | {dish['price']}元 | {restaurant['delivery_time']}分钟\n"
+            content += f"   辣度：{dish.get('spicy', '微辣')}\n\n"
+
+        content += "回复数字选择菜品，或说'换一批'重新推荐，说'下单'确认订单。"
+
+        if recommendations:
+            self.conversation_context["current_order"] = recommendations[0]
+
+        return {
+            "success": True,
+            "content": content,
+            "model": "mock",
+            "workflow": None,
+            "recommendations": recommendations
+        }
+
+    def _handle_re_recommend(self, user_prefs: dict) -> dict:
+        """处理换一批"""
+        params = self.conversation_context.get("last_search_params")
+        if not params:
+            return self._handle_recommend("推荐", user_prefs)
+
+        budget = params["budget"]
+        keyword = params["keyword"]
+        cuisine = params["cuisine"]
+        spicy = params["spicy"]
+        avoid = params["avoid"]
+        exclude_ids = self.conversation_context.get("recommended_ids", [])
+
+        print(f"[换一批] 预算={budget}, 菜系={cuisine}, 辣度={spicy}")
+
+        recommendations = self._get_recommendations_from_mock(budget, keyword, cuisine, spicy, avoid, exclude_ids)
+
+        if not recommendations:
+            print("[换一批] 没有更多菜品，重新开始")
+            self.conversation_context["recommended_ids"] = []
+            recommendations = self._get_recommendations_from_mock(budget, keyword, cuisine, spicy, avoid, [])
+
+        for rec in recommendations:
+            if rec["dish"]["id"] not in self.conversation_context["recommended_ids"]:
+                self.conversation_context["recommended_ids"].append(rec["dish"]["id"])
+
+        self.conversation_context["current_recommendations"] = recommendations
+
+        if not recommendations:
+            return {
+                "success": True,
+                "content": f"抱歉，没有更多符合您需求的菜品了。\n\n当前条件：{cuisine if cuisine else '不限'}菜系，{spicy}口味，预算{budget}元\n\n建议修改筛选条件。",
+                "model": "mock",
+                "workflow": None
+            }
+
+        content = f"为您换一批推荐（预算{budget}元，{spicy}口味）：\n\n"
+        for i, rec in enumerate(recommendations[:3], 1):
+            dish = rec["dish"]
+            restaurant = rec["restaurant"]
+            content += f"{i}. {dish['name']} - {restaurant['name']}\n"
+            content += f"   评分{restaurant['rating']}分 | {dish['price']}元 | {restaurant['delivery_time']}分钟\n"
+            content += f"   辣度：{dish.get('spicy', '微辣')}\n\n"
+
+        content += "回复数字选择，或说'换一批'继续。"
+
+        return {
+            "success": True,
+            "content": content,
+            "model": "mock",
+            "workflow": None,
+            "recommendations": recommendations
+        }
+
+    def _handle_modify(self, user_input: str, user_prefs: dict) -> dict:
+        """处理修改推荐请求"""
+        user_lower = user_input.lower()
+
+        budget = self.conversation_context["last_budget"]
+        keyword = self.conversation_context["last_keyword"]
+        cuisine = self.conversation_context["last_cuisine"]
+        spicy = self.conversation_context["last_spicy"]
+        avoid = self.conversation_context["last_avoid"].copy()
+
+        change_desc = []
+
+        if re.search(r'更贵|贵一点|提高预算', user_lower):
+            budget = min(100, budget + 10)
+            change_desc.append(f"预算提高为{budget}元")
+        elif re.search(r'更便宜|便宜一点|降低预算', user_lower):
+            budget = max(15, budget - 10)
+            change_desc.append(f"预算降低为{budget}元")
+
+        budget_match = re.search(r'(\d+)(?:元|块|块钱)', user_input)
+        if budget_match:
+            budget = int(budget_match.group(1))
+            change_desc.append(f"预算改为{budget}元")
+
+        cuisines = ["川菜", "粤菜", "湘菜", "东北菜", "日料", "韩餐", "西餐", "火锅", "小吃", "轻食",
+                    "西北菜", "东南亚", "港式", "清真", "新疆菜", "台湾菜", "京菜", "素食", "海鲜", "鲁菜", "甜品"]
+        for c in cuisines:
+            if c in user_input:
+                cuisine = c
+                change_desc.append(f"菜系改为{cuisine}")
+                break
+
+        for s in ["特辣", "中辣", "微辣", "不辣"]:
+            if s in user_input:
+                spicy = s
+                change_desc.append(f"辣度改为{spicy}")
+                break
+
+        exclude_match = re.search(r'不要([\u4e00-\u9fa5]{1,4})', user_input)
+        if exclude_match:
+            exclude_item = exclude_match.group(1)
+            if exclude_item not in avoid:
+                avoid.append(exclude_item)
+            change_desc.append(f"排除{exclude_item}")
+
+        if not change_desc:
+            return {
+                "success": True,
+                "content": "请告诉我具体要修改什么，例如：提高预算、改为川菜、不要香菜等",
+                "model": "mock",
+                "workflow": None
+            }
+
+        print(f"[修改推荐] 修改项: {change_desc}")
+
+        self.conversation_context["last_search_params"] = {
+            "budget": budget,
+            "keyword": keyword,
+            "cuisine": cuisine,
+            "spicy": spicy,
+            "avoid": avoid.copy(),
+        }
+        self.conversation_context["recommended_ids"] = []
+
+        recommendations = self._get_recommendations_from_mock(budget, keyword, cuisine, spicy, avoid)
+
+        for rec in recommendations:
+            self.conversation_context["recommended_ids"].append(rec["dish"]["id"])
+
+        self.conversation_context["last_budget"] = budget
+        self.conversation_context["last_keyword"] = keyword
+        self.conversation_context["last_cuisine"] = cuisine
+        self.conversation_context["last_spicy"] = spicy
+        self.conversation_context["last_avoid"] = avoid
+        self.conversation_context["current_recommendations"] = recommendations
+
+        if not recommendations:
+            return {
+                "success": True,
+                "content": f"抱歉，调整后仍没有找到符合您需求的菜品。\n\n当前条件：{cuisine if cuisine else '不限'}菜系，{spicy}口味，预算{budget}元，忌口{avoid if avoid else '无'}\n\n建议提高预算或放宽口味限制。",
+                "model": "mock",
+                "workflow": None
+            }
+
+        change_text = "，".join(change_desc)
+        content = f"{change_text}，为您重新推荐：\n\n"
+        for i, rec in enumerate(recommendations[:3], 1):
+            dish = rec["dish"]
+            restaurant = rec["restaurant"]
+            content += f"{i}. {dish['name']} - {restaurant['name']}\n"
+            content += f"   评分{restaurant['rating']}分 | {dish['price']}元 | {restaurant['delivery_time']}分钟\n"
+            content += f"   辣度：{dish.get('spicy', '微辣')}\n\n"
+
+        content += "回复数字选择，或继续调整。"
+
+        return {
+            "success": True,
+            "content": content,
+            "model": "mock",
+            "workflow": None,
+            "recommendations": recommendations
+        }
+
+    def select_dish(self, choice: int) -> dict:
+        """用户选择菜品"""
+        recommendations = self.conversation_context.get("current_recommendations", [])
+
+        if not recommendations or choice > len(recommendations):
+            return {
+                "success": False,
+                "content": "请选择有效的菜品编号",
+                "workflow": None
+            }
+
+        selected = recommendations[choice - 1]
+        # 保存到待确认订单
+        self.conversation_context["current_order"] = selected
+
+        dish = selected["dish"]
+        restaurant = selected["restaurant"]
+
+        content = f"您选择了：{dish['name']} ({restaurant['name']})\n"
+        content += f"价格：{dish['price']}元\n"
+        content += f"预计送达：{restaurant['delivery_time']}分钟\n\n"
+        content += "回复'下单'确认订单，或回复'取消'重新选择。"
+
+        print(f"[选择菜品] 已保存待确认订单: {dish['name']} - {restaurant['name']} - {dish['price']}元")
+
+        return {
+            "success": True,
+            "content": content,
+            "model": "mock",
+            "workflow": None
+        }
+
     def _call_cloud_api(self, messages: list) -> dict:
         """调用 DeepSeek API"""
         headers = {
@@ -241,9 +625,13 @@ class QwenRouterService:
         return response.strip()
 
     def chat(self, user_input: str, user_prefs: dict, context: list = None) -> dict:
-        """主对话接口 - 根据模式路由"""
-        # 1. 检测工作流（优先级最高）
+        """主对话接口 - 工作流优先，AI 回复兜底"""
+        user_input = user_input.strip()
         user_lower = user_input.lower()
+
+        print(f"[对话] 用户输入: {user_input}")
+
+        # 1. 工作流触发词检测（下单、追踪等）
         for pattern, workflow in self.workflow_triggers.items():
             if re.search(pattern, user_lower):
                 print(f"[工作流] 触发: {workflow}")
@@ -255,7 +643,63 @@ class QwenRouterService:
                     "model": "workflow"
                 }
 
-        # 2. 构建消息
+        # 2. 纯数字选择菜品
+        if user_input.isdigit():
+            return self.select_dish(int(user_input))
+
+        # 3. 换一批
+        if re.search(r'换一批|重新推荐|再来一批', user_lower):
+            return self._handle_re_recommend(user_prefs)
+
+        # 4. 推荐相关 - 使用 mock 数据集（本地和云端都走这个）
+        if any(kw in user_lower for kw in ["推荐", "吃什么", "想吃饭", "饿了", "有什么", "点", "想吃", "来一份"]):
+            return self._handle_recommend(user_input, user_prefs)
+
+        # 5. 修改推荐
+        if re.search(r'更贵|贵一点|提高预算|更便宜|便宜一点|降低预算|改为|换成|不要', user_lower):
+            return self._handle_modify(user_input, user_prefs)
+
+        # 6. 确认下单
+        if re.search(r'下单|确认', user_lower):
+            order = self.conversation_context.get("current_order")
+            if order:
+                return {
+                    "success": True,
+                    "content": "",
+                    "workflow": "submit_order",
+                    "params": {"user_input": user_input},
+                    "model": "workflow"
+                }
+            else:
+                return {
+                    "success": True,
+                    "content": "请先选择菜品（回复数字），然后再说'下单'确认。",
+                    "model": "mock",
+                    "workflow": None
+                }
+
+        # 7. 取消订单
+        if re.search(r'取消|重新选|换一个', user_lower):
+            self.conversation_context["current_order"] = None
+            recs = self.conversation_context.get("current_recommendations", [])
+            if recs:
+                content = "已取消，以下是推荐列表：\n\n"
+                for i, rec in enumerate(recs[:3], 1):
+                    dish = rec["dish"]
+                    restaurant = rec["restaurant"]
+                    content += f"{i}. {dish['name']} - {restaurant['name']}\n"
+                    content += f"   评分{restaurant['rating']}分 | {dish['price']}元 | {restaurant['delivery_time']}分钟\n\n"
+                content += "回复数字选择菜品，或说'换一批'重新推荐。"
+            else:
+                content = "已取消，请说'推荐'重新开始点餐。"
+            return {
+                "success": True,
+                "content": content,
+                "model": "mock",
+                "workflow": None
+            }
+
+        # 8. 其他情况：使用 AI 生成回复（本地或云端）
         prefs_text = f"""
 用户偏好：
 - 辣度：{user_prefs.get('spicy_level', '微辣')}
@@ -272,16 +716,14 @@ class QwenRouterService:
 
         messages.append({"role": "user", "content": user_input})
 
-        # 3. 根据模式路由
+        # 根据模式路由到本地模型或云端 API
         if self.mode == 'cloud':
             print("[路由] 使用云端 API")
             return self._call_cloud_api(messages)
         else:
             print("[路由] 使用本地模型")
             if not self.is_ready or self.model_small is None:
-                # 降级到模拟回复
                 return self._generate_mock_response(user_input, user_prefs)
-
             try:
                 response = self._generate_local(
                     self.model_small, self.tokenizer_small,

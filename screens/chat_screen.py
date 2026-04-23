@@ -279,28 +279,52 @@ class ChatScreen(MDScreen):
             self.manager.current = 'tracking'
         else:
             self._add_message("系统", "追踪功能暂不可用", is_user=False)
+
     def _wf_submit_order(self, params):
-        """工作流：提交订单"""
-        self._add_message("系统", "正在为您提交订单...", is_user=False)
+        """工作流：提交订单 - 使用用户实际选择的菜品"""
+        from services.local_auth import user_session
+        import random
 
-        prefs = user_session.get_prefs()
-        budget = prefs.get('default_budget', 30)
+        # 从 qwen 服务的上下文中获取当前待确认的订单
+        order = self.qwen.conversation_context.get("current_order")
 
-        order_data = {
-            'restaurant_name': params.get('restaurant', '默认商家'),
-            'items': [{'dish_name': params.get('dish', '推荐菜品'), 'price': budget, 'quantity': 1}],
-            'total_price': budget
-        }
+        if not order:
+            self._add_message("系统", "没有待确认的订单，请先选择菜品。", is_user=False)
+            return
 
+        dish = order["dish"]
+        restaurant = order["restaurant"]
+
+        # 构建订单项
+        items = [{
+            "dish_name": dish['name'],
+            "price": dish['price'],
+            "quantity": 1
+        }]
+
+        self._add_message("系统", f"正在提交订单：{dish['name']} ({restaurant['name']})...", is_user=False)
+
+        # 创建订单
         success, result = user_session.create_order(
-            restaurant_name=order_data['restaurant_name'],
-            items=order_data['items'],
-            total_price=order_data['total_price']
+            restaurant_name=restaurant['name'],
+            items=items,
+            total_price=dish['price']
         )
 
         if success:
-            self._add_message("系统", f"订单已提交成功！订单号：{result}", is_user=False)
-            Clock.schedule_once(lambda dt: setattr(self.manager, 'current', 'orders'), 1.5)
+            order_num = result if result else f"WM{random.randint(100000, 999999)}"
+            content = f"订单已提交成功！\n\n订单号：{order_num}\n"
+            content += f"商家：{restaurant['name']}\n"
+            content += f"菜品：{dish['name']}\n"
+            content += f"金额：{dish['price']}元\n"
+            content += f"预计送达：{restaurant['delivery_time']}分钟"
+            self._add_message("系统", content, is_user=False)
+
+            # 清空待确认订单
+            self.qwen.conversation_context["current_order"] = None
+
+            # 可选：跳转到订单页面
+            Clock.schedule_once(lambda dt: setattr(self.manager, 'current', 'orders'), 2)
         else:
             self._add_message("系统", f"下单失败：{result}", is_user=False)
 
