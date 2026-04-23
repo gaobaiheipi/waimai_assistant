@@ -47,9 +47,9 @@ jobs:
         run: |
           buildozer init
           cat >> buildozer.spec << 'EOF'
-android.accept_sdk_license = True
-android.sdk_path = /home/runner/.buildozer/android/platform/android-sdk
-EOF
+          android.accept_sdk_license = True
+          android.sdk_path = /home/runner/.buildozer/android/platform/android-sdk
+          EOF
           sed -i 's/requirements = python3,kivy/requirements = python3,kivy==2.3.0,kivymd==1.2.0,requests/' buildozer.spec
           sed -i 's/# android.permissions =/android.permissions = INTERNET/' buildozer.spec
           sed -i 's/# android.api =/android.api = 30/' buildozer.spec
