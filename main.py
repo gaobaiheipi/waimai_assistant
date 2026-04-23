@@ -34,6 +34,9 @@ if chinese_font:
 if sys.platform == 'win32':
     from kivy.core.window import Window
     Window.size = (375, 812)
+if sys.platform == 'android':
+    from kivy.core.window import Window
+    Window.fullscreen = True
 
 from screens.login_screen import LoginScreen
 from screens.home_screen import HomeScreen
