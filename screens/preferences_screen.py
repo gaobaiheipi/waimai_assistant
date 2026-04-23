@@ -231,37 +231,40 @@ class PreferencesScreen(MDScreen):
                 budget = int(self.ids.budget_input.text)
                 if 10 <= budget <= 500:
                     prefs["default_budget"] = budget
-                    prefs["budget_range"] = str(budget)  # 同时设置两个字段
+                    prefs["budget_range"] = str(budget)
                 else:
-                    MDSnackbar(MDLabel(text="预算范围：10-500元")).open()
+                    self.show_snackbar("预算范围：10-500元")
                     return
             except ValueError:
-                MDSnackbar(MDLabel(text="请输入有效的预算金额")).open()
+                self.show_snackbar("请输入有效的预算金额")
                 return
 
         # 地址
         if hasattr(self.ids, 'address_input') and self.ids.address_input:
             prefs["default_address"] = self.ids.address_input.text.strip()
 
+        # 同时更新 spiciness_level 字段（兼容数据库）
+        prefs["spiciness_level"] = self.spicy_level
+
         print(f"准备保存的偏好: {prefs}")
 
-        # 更新会话
+        # 更新会话（游客也会保存到内存）
         user_session.update_prefs(prefs)
 
         print(f"会话中的偏好: {user_session.get_prefs()}")
 
         if not user_session.is_guest:
-            # 再次确认数据库是否保存成功
+            # 注册用户：保存到数据库
             result = local_auth.update_prefs(prefs)
             if result:
                 print("偏好保存到数据库成功")
-                MDSnackbar(MDLabel(text="偏好设置已保存")).open()
+                self.show_snackbar("偏好设置已保存")
             else:
                 print("偏好保存到数据库失败")
-                MDSnackbar(MDLabel(text="保存失败，请重试")).open()
+                self.show_snackbar("保存失败，请重试")
         else:
-            print("游客模式：设置仅本次有效")
-            MDSnackbar(MDLabel(text="游客模式：设置仅本次有效")).open()
+            print("游客模式：设置已保存到内存（本次会话有效）")
+            self.show_snackbar("游客模式：设置仅本次有效")
 
         # 刷新 UI 显示
         self._update_ui(0)

@@ -92,7 +92,10 @@ class UserSession(EventDispatcher):
     def get_prefs(self) -> dict:
         """获取偏好"""
         if self.is_guest:
-            # 游客使用默认偏好
+            # 游客使用会话中保存的偏好（不是默认值）
+            if hasattr(self, '_guest_prefs') and self._guest_prefs:
+                return self._guest_prefs
+            # 默认偏好
             default_prefs = {
                 'spiciness_level': '微辣',
                 'budget_range': '30',
@@ -109,20 +112,25 @@ class UserSession(EventDispatcher):
 
     def update_prefs(self, prefs: dict) -> bool:
         """更新偏好"""
-        print(f"update_prefs 被调用: {prefs}")
-        print(f"当前用户: user_id={self.user_id}, is_guest={self.is_guest}")
-
         self._prefs.update(prefs)
         self.preferences = self._prefs.copy()
 
-        if not self.is_guest and self.user_id:
-            print(f"保存到数据库: user_id={self.user_id}")
-            result = self.db.update_preferences(int(self.user_id), self._prefs)
-            print(f"数据库保存结果: {result}")
-            return result
-        else:
-            print("游客模式，不保存到数据库")
+        if self.is_guest:
+            # 游客模式：保存到内存中的 _guest_prefs
+            if not hasattr(self, '_guest_prefs'):
+                self._guest_prefs = {}
+            self._guest_prefs.update(prefs)
+            print(f"[游客] 偏好已保存到内存: {self._guest_prefs}")
             return True
+
+        if self.user_id:
+            return self.db.update_preferences(int(self.user_id), self._prefs)
+        return True
+
+    def clear_guest_prefs(self):
+        """清除游客偏好（退出时调用）"""
+        if hasattr(self, '_guest_prefs'):
+            self._guest_prefs = {}
 
     def create_order(self, restaurant_name: str, items: list, total_price: float) -> tuple:
         """创建订单"""

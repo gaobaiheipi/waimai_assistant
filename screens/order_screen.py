@@ -19,7 +19,15 @@ class OrderScreen(MDScreen):
         # 不再使用 OrderManager，改用 user_session
 
     def on_enter(self):
-        """进入时加载订单"""
+        """进入时加载订单（强制刷新）"""
+        from services.local_auth import user_session
+
+        print(f"[订单页面] 当前用户: {user_session.nickname}, 是否游客: {user_session.is_guest}")
+
+        # 清空现有数据，强制重新加载
+        orders_list = self.ids.orders_list
+        orders_list.clear_widgets()
+
         self.load_orders()
 
     def load_orders(self):

@@ -36,7 +36,22 @@ class TrackingScreen(MDScreen):
 
     def on_enter(self):
         """进入界面时加载追踪信息"""
-        print(f"[追踪] 进入追踪页面")
+        from services.local_auth import user_session
+
+        print(f"[追踪页面] 当前用户: {user_session.nickname}, 是否游客: {user_session.is_guest}")
+
+        # 重置状态
+        self.simulation_step = 0
+        self.sim_status = None
+        self.sim_rider_name = None
+        self.sim_rider_phone = None
+
+        # 清除旧的定时器
+        if self.update_clock:
+            self.update_clock.cancel()
+            self.update_clock = None
+
+        # 重新加载
         if hasattr(self, '_order_id') and self._order_id:
             self.load_tracking(self._order_id)
         else:
@@ -306,7 +321,10 @@ class TrackingScreen(MDScreen):
         self.manager.current = 'orders'
 
     def call_rider(self):
-        """联系骑手"""
+        """联系骑手 - 显示骑手电话"""
+        from utils.fonts import chinese_font
+        from kivy.clock import Clock
+
         if self.rider_phone:
             dialog = MDDialog(
                 title="联系骑手",
@@ -325,6 +343,19 @@ class TrackingScreen(MDScreen):
                     )
                 ]
             )
+
+            # 延迟设置字体
+            def fix_dialog_font(dt):
+                if hasattr(dialog, 'title_label'):
+                    dialog.title_label.font_name = chinese_font
+                for btn in dialog.buttons:
+                    if hasattr(btn, 'font_name'):
+                        btn.font_name = chinese_font
+                if hasattr(dialog, 'content_cls') and dialog.content_cls:
+                    if hasattr(dialog.content_cls, 'font_name'):
+                        dialog.content_cls.font_name = chinese_font
+
+            Clock.schedule_once(fix_dialog_font, 0.1)
             dialog.open()
         else:
             print("[模拟] 暂无可联系的骑手，请稍后再试")
