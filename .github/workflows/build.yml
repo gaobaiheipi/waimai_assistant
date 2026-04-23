@@ -31,34 +31,40 @@ jobs:
         run: |
           pip install cython buildozer
 
-      - name: Setup Android SDK
+      - name: Install Android SDK
         run: |
-          # 删除 Buildozer 可能创建的 SDK 目录
-          rm -rf /home/runner/.buildozer/android/platform/android-sdk
-          
-          # 创建软链接指向系统 SDK
-          mkdir -p /home/runner/.buildozer/android/platform
-          ln -sf /usr/local/lib/android/sdk /home/runner/.buildozer/android/platform/android-sdk
-          
-          # 验证 build-tools 存在
-          ls -la /usr/local/lib/android/sdk/build-tools/
+          mkdir -p /home/runner/.buildozer/android/platform/android-sdk/cmdline-tools/latest
+          cd /home/runner/.buildozer/android/platform/android-sdk/cmdline-tools/latest
+          wget https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          unzip -q commandlinetools-linux-11076708_latest.zip
+          rm commandlinetools-linux-11076708_latest.zip
+          mv cmdline-tools/* .
+          rmdir cmdline-tools
+          export PATH=$PATH:$PWD/bin
+          yes | sdkmanager --licenses
+          sdkmanager "platform-tools" "platforms;android-30" "build-tools;30.0.3"
+          cd /home/runner/.buildozer/android/platform/android-sdk
+          ln -s cmdline-tools/latest tools
+        env:
+          ANDROID_SDK_ROOT: /home/runner/.buildozer/android/platform/android-sdk
 
       - name: Build APK
         run: |
+          export ANDROID_SDK_ROOT=/home/runner/.buildozer/android/platform/android-sdk
+          export PATH=$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin
           buildozer init
           cat >> buildozer.spec << 'EOF'
           android.accept_sdk_license = True
+          android.ndk = 23b
+          android.sdk = 30
           android.sdk_path = /home/runner/.buildozer/android/platform/android-sdk
           EOF
           sed -i 's/requirements = python3,kivy/requirements = python3,kivy==2.3.0,kivymd==1.2.0,requests/' buildozer.spec
           sed -i 's/# android.permissions =/android.permissions = INTERNET/' buildozer.spec
-          sed -i 's/# android.api =/android.api = 30/' buildozer.spec
-          sed -i 's/# android.minapi =/android.minapi = 21/' buildozer.spec
           sed -i 's/orientation = landscape/orientation = portrait/' buildozer.spec
           buildozer -v android debug
         env:
           HOME: /home/runner
-          ANDROID_SDK_ROOT: /home/runner/.buildozer/android/platform/android-sdk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
