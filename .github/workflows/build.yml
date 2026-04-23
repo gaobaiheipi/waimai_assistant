@@ -37,11 +37,11 @@ jobs:
           EOF
 
           docker run --rm \
-            -v $PWD:/app \
-            -v $HOME/.buildozer:/home/user/.buildozer \
-            -w /app \
+            -v $(pwd):/home/user/hostcwd \
+            -w /home/user/hostcwd \
+            --entrypoint /bin/bash \
             kivy/buildozer:latest \
-            bash -c "echo 'y' | buildozer -v android debug"
+            -c "echo y | buildozer -v android debug"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
