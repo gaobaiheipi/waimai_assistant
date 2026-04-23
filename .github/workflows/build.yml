@@ -27,7 +27,7 @@ jobs:
           android.permissions = INTERNET
           android.api = 30
           android.minapi = 21
-          android.ndk = 23b
+          android.ndk = 25b
           android.sdk = 30
           android.archs = armeabi-v7a
           android.allow_backup = True
