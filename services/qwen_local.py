@@ -59,11 +59,9 @@ class QwenRouterService:
     def _get_default_mode(self):
         """根据运行环境自动选择模式"""
         if platform == 'android':
-            # 手机端使用云端 API
             print("[模式] Android 环境，使用云端 API")
             return 'cloud'
         else:
-            # PC 端使用本地模型
             print("[模式] PC 环境，使用本地模型")
             return 'local'
 
@@ -105,7 +103,7 @@ class QwenRouterService:
                     return
 
                 print("\n[2/2] 尝试加载 3B 生成模型...")
-                # self._load_large_model()
+                # self._load_large_model()  # 默认不加载，避免内存不足
 
                 self.is_ready = True
                 if callback:
@@ -189,7 +187,6 @@ class QwenRouterService:
             self.model_large = None
             return False
 
-
     def _get_all_restaurant_names(self) -> list:
         """获取所有餐厅名称"""
         return [r["name"] for r in RESTAURANTS]
@@ -198,6 +195,18 @@ class QwenRouterService:
         """获取所有菜品名称"""
         all_dishes = self._get_all_dishes_with_restaurant()
         return [item["dish"]["name"] for item in all_dishes]
+
+    def _get_all_dishes_with_restaurant(self) -> list:
+        """获取所有菜品（带餐厅信息）"""
+        all_items = []
+        for restaurant in RESTAURANTS:
+            dishes = DISHES_BY_RESTAURANT.get(restaurant["id"], [])
+            for dish in dishes:
+                all_items.append({
+                    "dish": dish,
+                    "restaurant": restaurant,
+                })
+        return all_items
 
     def _parse_user_intent(self, user_input: str) -> dict:
         """解析用户意图，提取关键词、预算、菜系、辣度、忌口"""
@@ -228,33 +237,27 @@ class QwenRouterService:
                 result["cuisine"] = c
                 break
 
-        # 提取餐厅名（完全匹配）
+        # 提取餐厅名
         all_restaurants = self._get_all_restaurant_names()
         for r in all_restaurants:
             if r in user_input:
                 result["restaurant"] = r
-                print(f"[解析] 检测到餐厅: {r}")
                 break
 
-        # 提取菜品名（支持模糊匹配 - 只要菜品名包含用户输入的关键词）
-        if not result["restaurant"]:  # 如果没有匹配到餐厅，才匹配菜品
+        # 提取菜品名
+        if not result["restaurant"]:
             all_dishes = self._get_all_dish_names()
-            # 按菜品名长度降序排序，优先匹配更长的
             all_dishes.sort(key=len, reverse=True)
             for dish in all_dishes:
                 if dish in user_input:
                     result["dish_name"] = dish
-                    print(f"[解析] 检测到菜品: {dish}")
                     break
-            # 如果还是没匹配到，尝试模糊匹配（用户说的不完整，如"麻婆"匹配"麻婆豆腐"）
             if not result["dish_name"]:
-                # 提取用户输入中的中文词（2-4个字）
                 potential_names = re.findall(r'([\u4e00-\u9fa5]{2,4})', user_input)
                 for pn in potential_names:
                     for dish in all_dishes:
                         if pn in dish and len(pn) >= 2:
                             result["dish_name"] = dish
-                            print(f"[解析] 模糊匹配到菜品: {dish} (关键词: {pn})")
                             break
                     if result["dish_name"]:
                         break
@@ -288,18 +291,14 @@ class QwenRouterService:
         avoid_match = re.search(r'不要([\u4e00-\u9fa5]{1,4})', user_input)
         if avoid_match:
             avoid_item = avoid_match.group(1)
-
-            # 标准化为 allergens 中使用的标签
             allergen_normalize = {
                 "奶": "乳制品", "牛奶": "乳制品", "芝士": "乳制品", "奶酪": "乳制品",
                 "香菜": "香菜", "芫荽": "香菜",
                 "蒜": "蒜", "大蒜": "蒜",
                 "花生": "花生",
             }
-
             if avoid_item in allergen_normalize:
                 avoid_item = allergen_normalize[avoid_item]
-
             if avoid_item and avoid_item not in ["吃", "放", "加", "要"]:
                 result["avoid"] = [avoid_item]
 
@@ -313,7 +312,6 @@ class QwenRouterService:
         exclude_ids = exclude_ids or []
 
         def match_spicy(dish_spicy: str, user_spicy: str) -> bool:
-            """严格匹配辣度，只有完全一致才推荐"""
             if not user_spicy or user_spicy == "不限":
                 return True
             return dish_spicy == user_spicy
@@ -323,7 +321,6 @@ class QwenRouterService:
             restaurant = rec["restaurant"]
             dish_name = dish["name"]
 
-            # 1. 忌口过滤
             if avoid:
                 dish_allergens = dish.get("allergens", [])
                 is_avoided = False
@@ -334,74 +331,143 @@ class QwenRouterService:
                 if is_avoided:
                     continue
 
-            # 2. 预算过滤
             if dish["price"] > budget * 1.2:
                 continue
 
-            # 3. 菜系过滤
             if cuisine and cuisine not in restaurant["cuisine"]:
                 continue
 
-            # 4. 关键词过滤
             if keyword and keyword not in dish_name:
                 continue
 
-            # 5. 辣度过滤
             if spicy:
                 dish_spicy = dish.get("spicy", "微辣")
                 if not match_spicy(dish_spicy, spicy):
-                    print(f"[辣度过滤] 排除 {dish_name}，菜品辣度={dish_spicy}，用户要求={spicy}")
                     continue
 
-            # 6. 排除已推荐
             if dish["id"] in exclude_ids:
                 continue
 
             filtered.append(rec)
 
-        # 排序：餐厅评分降序，价格升序
         filtered.sort(key=lambda x: (-x["restaurant"]["rating"], x["dish"]["price"]))
-
         return filtered
-
-    def _get_all_dishes_with_restaurant(self) -> list:
-        """获取所有菜品（带餐厅信息）"""
-        all_items = []
-        for restaurant in RESTAURANTS:
-            dishes = DISHES_BY_RESTAURANT.get(restaurant["id"], [])
-            for dish in dishes:
-                all_items.append({
-                    "dish": dish,
-                    "restaurant": restaurant,
-                })
-        return all_items
 
     def _get_recommendations_from_mock(self, budget: float, keyword: str = None,
                                        cuisine: str = None, spicy: str = None,
                                        avoid: list = None, exclude_ids: list = None) -> list:
         """从 mock 数据集获取推荐"""
         all_items = self._get_all_dishes_with_restaurant()
-
-        print(f"[搜索] 预算={budget}, 关键词={keyword}, 菜系={cuisine}, 辣度={spicy}, 忌口={avoid}")
-
         filtered = self._filter_by_prefs(
             all_items, budget, keyword, cuisine, spicy, avoid, exclude_ids
         )
-
-        filtered.sort(key=lambda x: x["restaurant"]["rating"], reverse=True)
-
-        print(f"[搜索结果] 找到 {len(filtered)} 个菜品")
-        for item in filtered[:5]:
-            print(
-                f"  - {item['dish']['name']} ({item['restaurant']['name']}) - 过敏原: {item['dish'].get('allergens', [])}")
-
         return filtered[:5]
 
-    def _build_recommendation_response(self, recommendations: list, budget: int, spicy: str, user_input: str,
-                                       user_prefs: dict) -> str:
-        """构建推荐回复（带AI生成的健康提示）"""
-        if not recommendations:
-            return f"抱歉，在{budget}元预算内没有找到符合您需求的菜品。\n\n建议提高预算或放宽口味限制。"
+    def _ai_filter_dishes(self, all_items: list, user_input: str, user_prefs: dict,
+                          budget: float, cuisine: str, spicy: str, avoid: list, keyword: str) -> list:
+        """让 AI 从所有菜品中筛选出最符合用户需求的菜品"""
+
+        # 首先根据菜系预筛选，减少传给 AI 的选项
+        prefiltered = []
+        for item in all_items:
+            restaurant = item["restaurant"]
+            # 如果指定了菜系，只保留该菜系的餐厅
+            if cuisine and cuisine not in restaurant["cuisine"]:
+                continue
+            # 其他基本过滤
+            dish = item["dish"]
+            if dish["price"] > budget * 1.2:
+                continue
+            if spicy and dish.get("spicy", "微辣") != spicy:
+                continue
+            if avoid:
+                dish_allergens = dish.get("allergens", [])
+                if any(a in dish_allergens for a in avoid):
+                    continue
+            prefiltered.append(item)
+
+        # 如果预筛选后没有菜品，返回空
+        if not prefiltered:
+            return []
+
+        # 限制传给 AI 的菜品数量
+        prefiltered = prefiltered[:50]
+
+        # 构建菜品摘要
+        dishes_summary = []
+        for item in prefiltered:
+            dish = item["dish"]
+            restaurant = item["restaurant"]
+            dishes_summary.append({
+                "id": dish["id"],
+                "name": dish["name"],
+                "price": dish["price"],
+                "restaurant": restaurant["name"],
+                "rating": restaurant["rating"],
+                "spicy": dish.get("spicy", "微辣")
+            })
+
+        # 构建提示词，明确要求菜系
+        cuisine_text = f"必须从【{cuisine}】菜系中选择" if cuisine else "不限菜系"
+
+        prompt = f"""根据用户需求，从以下菜品列表中选择3-5个最合适的菜品。
+
+    用户需求：{user_input}
+    用户要求菜系：{cuisine_text}
+    用户辣度要求：{spicy}
+    用户忌口：{', '.join(avoid) if avoid else '无'}
+    用户预算：{budget}元
+
+    菜品列表：
+    {json.dumps(dishes_summary, ensure_ascii=False, indent=2)[:2500]}
+
+    要求：
+    1. 只返回菜品ID列表，格式为 [id1, id2, id3, ...]
+    2. 必须选择{cuisine}菜系的菜品
+    3. 优先选择评分高、价格符合预算的菜品
+    4. 不要返回任何解释文字"""
+
+        messages = [
+            {"role": "system",
+             "content": f"你是外卖推荐助手，只能从【{cuisine}】菜系中选择菜品，只返回菜品ID列表。" if cuisine else "你是外卖推荐助手，从给定列表中筛选菜品，只返回菜品ID列表。"},
+            {"role": "user", "content": prompt}
+        ]
+
+        if self.mode == 'cloud':
+            result = self._call_cloud_api(messages)
+        else:
+            if not self.is_ready or self.model_small is None:
+                return []
+            try:
+                response = self._generate_local(
+                    self.model_small, self.tokenizer_small,
+                    messages, max_new_tokens=200
+                )
+                result = {"success": True, "content": response}
+            except Exception as e:
+                print(f"AI筛选失败: {e}")
+                return []
+
+        if result.get("success"):
+            try:
+                content = result["content"]
+                ids = re.findall(r'[a-zA-Z0-9_]+', content)
+                selected = []
+                for item in prefiltered:
+                    if item["dish"]["id"] in ids and item not in selected:
+                        # 再次确认菜系
+                        if cuisine and cuisine not in item["restaurant"]["cuisine"]:
+                            continue
+                        selected.append(item)
+                return selected[:5]
+            except Exception as e:
+                print(f"解析AI结果失败: {e}")
+                return []
+        return []
+
+    def _format_recommendation_response(self, recommendations: list, budget: int, spicy: str,
+                                        user_input: str, user_prefs: dict) -> str:
+        """按照固定格式生成推荐回复"""
 
         content = f"根据您的偏好（{spicy}口味，预算{budget}元），为您推荐：\n\n"
         for i, rec in enumerate(recommendations[:3], 1):
@@ -409,20 +475,22 @@ class QwenRouterService:
             restaurant = rec["restaurant"]
             content += f"{i}. {dish['name']} - {restaurant['name']}\n"
             content += f"   评分{restaurant['rating']}分 | {dish['price']}元 | {restaurant['delivery_time']}分钟\n"
-            content += f"   {dish.get('description', '人气推荐')[:30]}\n\n"
+            content += f"   {dish.get('description', '人气推荐')}\n\n"
 
         content += "-" * 30 + "\n"
+        content += "健康提示："
 
-        # 始终生成健康提示
+        # 生成健康提示
         tip = self._generate_health_tip(user_input, recommendations, user_prefs)
-        content += f"健康提示：{tip}\n"
+        content += tip + "\n"
         content += "-" * 30 + "\n\n"
         content += "回复数字选择菜品，或说'换一批'重新推荐，说'下单'确认订单。"
 
         return content
 
     def _handle_recommend(self, user_input: str, user_prefs: dict) -> dict:
-        """处理推荐请求（全新推荐）"""
+        """处理推荐请求 - AI 从 mock 数据集中筛选并格式化输出"""
+
         parsed = self._parse_user_intent(user_input)
 
         budget = parsed["budget"] if parsed["budget"] is not None else user_prefs.get('default_budget', 30)
@@ -431,22 +499,31 @@ class QwenRouterService:
         spicy = parsed["spicy"] if parsed["spicy"] is not None else user_prefs.get('spicy_level', '微辣')
         avoid = parsed["avoid"] if parsed["avoid"] else user_prefs.get('avoid_foods', [])
 
-        print(f"[全新推荐] 预算: {budget}, 辣度: {spicy}, 忌口: {avoid}")
+        print(f"[全新推荐] 预算: {budget}, 菜系: {cuisine}, 辣度: {spicy}, 忌口: {avoid}, 关键词: {keyword}")
 
-        # 保存搜索参数
-        self.conversation_context["last_search_params"] = {
-            "budget": budget,
-            "keyword": keyword,
-            "cuisine": cuisine,
-            "spicy": spicy,
-            "avoid": avoid.copy(),
-        }
-        self.conversation_context["recommended_ids"] = []
-
-        # 获取推荐
+        # 先尝试规则推荐（确保有结果）
         recommendations = self._get_recommendations_from_mock(budget, keyword, cuisine, spicy, avoid)
 
-        # 记录ID
+        # 如果没有找到任何菜品，放宽辣度限制再试一次
+        if not recommendations:
+            print("[推荐] 未找到菜品，尝试放宽辣度限制")
+            recommendations = self._get_recommendations_from_mock(budget, keyword, cuisine, None, avoid)
+
+        # 如果还是没有，尝试用 AI 筛选
+        if not recommendations or len(recommendations) < 2:
+            all_items = self._get_all_dishes_with_restaurant()
+            ai_results = self._ai_filter_dishes(all_items, user_input, user_prefs, budget, cuisine, spicy, avoid,
+                                                keyword)
+            if ai_results:
+                # 合并 AI 结果和规则结果，去重
+                existing_ids = [r["dish"]["id"] for r in recommendations]
+                for item in ai_results:
+                    if item["dish"]["id"] not in existing_ids:
+                        recommendations.append(item)
+                    if len(recommendations) >= 5:
+                        break
+
+        # 记录ID和上下文
         for rec in recommendations:
             self.conversation_context["recommended_ids"].append(rec["dish"]["id"])
 
@@ -456,19 +533,23 @@ class QwenRouterService:
         self.conversation_context["last_spicy"] = spicy
         self.conversation_context["last_avoid"] = avoid.copy()
         self.conversation_context["current_recommendations"] = recommendations
+        self.conversation_context["last_search_params"] = {
+            "budget": budget, "keyword": keyword, "cuisine": cuisine,
+            "spicy": spicy, "avoid": avoid.copy(),
+        }
 
         if not recommendations:
+            # 提供更友好的提示信息
+            tip = f"没有找到{cuisine if cuisine else ''}菜系中符合预算{budget}元、辣度{spicy}的菜品。"
+            tip += "\n\n建议：\n- 提高预算\n- 放宽口味限制\n- 尝试其他菜系"
             return {
                 "success": True,
-                "content": f"抱歉，在{budget}元预算内没有找到符合您需求的菜品。\n\n建议提高预算或放宽口味限制。",
-                "model": "mock",
+                "content": tip,
+                "model": "qwen-0.5b (0.5B)" if self.mode == 'local' else "Deepseek",
                 "workflow": None
             }
 
-        # 构建回复（传入 user_input 和 user_prefs）
-        content = self._build_recommendation_response(
-            recommendations, budget, spicy, user_input, user_prefs
-        )
+        content = self._format_recommendation_response(recommendations, budget, spicy, user_input, user_prefs)
 
         if recommendations:
             self.conversation_context["current_order"] = recommendations[0]
@@ -650,7 +731,6 @@ class QwenRouterService:
             }
 
         selected = recommendations[choice - 1]
-        # 保存到待确认订单
         self.conversation_context["current_order"] = selected
 
         dish = selected["dish"]
@@ -660,8 +740,6 @@ class QwenRouterService:
         content += f"价格：{dish['price']}元\n"
         content += f"预计送达：{restaurant['delivery_time']}分钟\n\n"
         content += "回复'下单'确认订单，或回复'取消'重新选择。"
-
-        print(f"[选择菜品] 已保存待确认订单: {dish['name']} - {restaurant['name']} - {dish['price']}元")
 
         return {
             "success": True,
@@ -755,17 +833,9 @@ class QwenRouterService:
         if re.search(r'换一批|重新推荐|再来一批', user_lower):
             return self._handle_re_recommend(user_prefs)
 
-        # 4. 推荐相关 - 使用 mock 数据集获取数据，但用 AI 生成回复
+        # 4. 推荐相关
         if any(kw in user_lower for kw in ["推荐", "吃什么", "想吃饭", "饿了", "有什么", "点", "想吃", "来一份"]):
-            # 先获取推荐数据
-            result = self._handle_recommend(user_input, user_prefs)
-            if result.get("recommendations"):
-                # 用 AI 生成推荐描述
-                rec_data = result["recommendations"]
-                content = self._generate_recommendation_with_ai(user_input, rec_data, user_prefs)
-                result["content"] = content
-                result["model"] = "qwen-0.5b (0.5B)" if self.mode == 'local' else "deepseek"
-            return result
+            return self._handle_recommend(user_input, user_prefs)
 
         # 5. 修改推荐
         if re.search(r'更贵|贵一点|提高预算|更便宜|便宜一点|降低预算|改为|换成|不要', user_lower):
@@ -811,13 +881,13 @@ class QwenRouterService:
                 "workflow": None
             }
 
-        # 8. 其他情况：使用 AI 生成回复（本地或云端）
+        # 8. 其他情况：使用 AI 生成回复
         prefs_text = f"""
-    用户偏好：
-    - 辣度：{user_prefs.get('spicy_level', '微辣')}
-    - 忌口：{', '.join(user_prefs.get('avoid_foods', [])) or '无'}
-    - 预算：{user_prefs.get('default_budget', 30)}元
-    """
+用户偏好：
+- 辣度：{user_prefs.get('spicy_level', '微辣')}
+- 忌口：{', '.join(user_prefs.get('avoid_foods', [])) or '无'}
+- 预算：{user_prefs.get('default_budget', 30)}元
+"""
 
         messages = [
             {"role": "system", "content": f"你是智能外卖助手。{prefs_text} 回答简洁。"}
@@ -828,10 +898,12 @@ class QwenRouterService:
 
         messages.append({"role": "user", "content": user_input})
 
-        # 根据模式路由到本地模型或云端 API
         if self.mode == 'cloud':
             print("[路由] 使用云端 API")
-            return self._call_cloud_api(messages)
+            result = self._call_cloud_api(messages)
+            if result.get("success"):
+                result["model"] = "Deepseek"
+            return result
         else:
             print("[路由] 使用本地模型")
             if not self.is_ready or self.model_small is None:
@@ -859,72 +931,16 @@ class QwenRouterService:
             return {
                 "success": True,
                 "content": f"根据您的偏好，推荐：\n1. 招牌麻辣烫 ¥{budget - 8}\n2. 黄焖鸡米饭 ¥{budget - 5}\n\n回复数字选择",
-                "model": "mock",
+                "model": "qwen-0.5b (0.5B)" if self.mode == 'local' else "Deepseek",
                 "workflow": None
             }
 
         return {
             "success": True,
             "content": f"收到：{user_input}\n\n我是外卖助手，可以说'推荐美食'开始点餐。",
-            "model": "mock",
+            "model": "qwen-0.5b (0.5B)" if self.mode == 'local' else "Deepseek",
             "workflow": None
         }
-
-    def _generate_recommendation_with_ai(self, user_input: str, recommendations: list, user_prefs: dict) -> str:
-        """使用 AI 生成推荐回复（保持数据结构来自 mock）"""
-        if not recommendations:
-            return "抱歉，没有找到符合您需求的菜品。"
-
-        # 构建菜品列表文本
-        dishes_text = ""
-        for i, rec in enumerate(recommendations[:3], 1):
-            dish = rec["dish"]
-            restaurant = rec["restaurant"]
-            dishes_text += f"{i}. {dish['name']} - {restaurant['name']}，评分{restaurant['rating']}分，{dish['price']}元，{restaurant['delivery_time']}分钟\n"
-
-        prompt = f"""根据用户需求"{user_input}"，生成外卖推荐回复。
-
-    推荐菜品：
-    {dishes_text}
-
-    用户偏好：辣度={user_prefs.get('spicy_level', '微辣')}，忌口={user_prefs.get('avoid_foods', [])}，预算={user_prefs.get('default_budget', 30)}元
-
-    要求：
-    1. 复述用户偏好
-    2. 列出推荐的3个菜品
-    3. 生成一句健康提示
-    4. 提示用户回复数字选择
-    5. 简洁明了，不要使用表情符号"""
-
-        messages = [
-            {"role": "system", "content": "你是外卖助手，生成简洁的推荐回复。"},
-            {"role": "user", "content": prompt}
-        ]
-
-        # 根据模式生成
-        if self.mode == 'cloud':
-            result = self._call_cloud_api(messages)
-        else:
-            if not self.is_ready or self.model_small is None:
-                # 降级到模板回复
-                return self._build_recommendation_response(recommendations, user_prefs.get('default_budget', 30),
-                                                           user_prefs.get('spicy_level', '微辣'), user_input,
-                                                           user_prefs)
-            try:
-                response = self._generate_local(
-                    self.model_small, self.tokenizer_small,
-                    messages, max_new_tokens=200
-                )
-                result = {"success": True, "content": response}
-            except Exception as e:
-                result = {"success": False, "error": str(e)}
-
-        if result.get("success"):
-            return result["content"]
-        else:
-            # 降级到模板回复
-            return self._build_recommendation_response(recommendations, user_prefs.get('default_budget', 30),
-                                                       user_prefs.get('spicy_level', '微辣'), user_input, user_prefs)
 
     def _call_cloud_api_for_tip(self, messages: list, selected_dishes: list) -> str:
         """调用云端 API 生成健康提示"""
@@ -952,7 +968,6 @@ class QwenRouterService:
             if response.status_code == 200:
                 result = response.json()
                 content = result["choices"][0]["message"]["content"]
-                # 去除可能的表情符号
                 content = re.sub(r'[\U00010000-\U0010ffff]', '', content)
                 return content.strip()
             else:
@@ -989,8 +1004,6 @@ class QwenRouterService:
             response = self.tokenizer_small.decode(
                 outputs[0][len(inputs.input_ids[0]):], skip_special_tokens=True
             )
-
-            # 去除可能的表情符号
             response = re.sub(r'[\U00010000-\U0010ffff]', '', response)
             return response.strip()
 
@@ -999,38 +1012,29 @@ class QwenRouterService:
             return self._get_fallback_tip(selected_dishes)
 
     def _generate_health_tip(self, user_input: str, selected_dishes: list, user_prefs: dict) -> str:
-        """根据用户点单需求生成健康提示（根据模式选择本地或云端）"""
-
-        # 构建提示词
+        """根据用户点单需求生成健康提示"""
         dishes_text = ""
         for dish in selected_dishes[:3]:
             dishes_text += f"- {dish['dish']['name']} ({dish['restaurant']['name']})\n"
 
-        prompt = f"""根据用户的点餐需求，生成一句简短的健康饮食提示（不超过30字）。
+        prompt = f"""根据用户的点餐需求，生成一句简短的健康饮食提示（不超过25字）。
 
-    用户需求：{user_input}
-    用户选择的菜品：
-    {dishes_text}
-    用户偏好：辣度={user_prefs.get('spicy_level', '微辣')}，忌口={user_prefs.get('avoid_foods', [])}
+用户需求：{user_input}
+用户选择的菜品：
+{dishes_text}
+用户偏好：辣度={user_prefs.get('spicy_level', '微辣')}，忌口={user_prefs.get('avoid_foods', [])}
 
-    要求：
-    - 只输出提示内容，不要加任何前缀
-    - 不要使用表情符号
-    - 提示要针对用户选择的菜品
-    - 语言亲切自然
-
-    示例：
-    - 麻辣食物适量食用，可搭配酸奶缓解肠胃不适
-    - 主食和蔬菜搭配食用，营养更均衡
-    - 油炸食品热量较高，建议适量食用
-    - 餐后喝杯温水，帮助消化"""
+要求：
+- 只输出提示内容，不要加任何前缀
+- 不要使用表情符号
+- 提示要针对用户选择的菜品
+- 语言亲切自然"""
 
         messages = [
             {"role": "system", "content": "你是营养健康助手，生成简洁的健康饮食提示。"},
             {"role": "user", "content": prompt}
         ]
 
-        # 根据模式选择生成方式
         if self.mode == 'cloud':
             print("[健康提示] 使用云端 API 生成")
             return self._call_cloud_api_for_tip(messages, selected_dishes)
