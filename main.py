@@ -52,6 +52,11 @@ class WaimaiManager(MDScreenManager):
 
 
 class WaimaiApp(MDApp):
+    if hasattr(Window, 'set_icon'):
+        try:
+            Window.set_icon('assets/waimai.png')
+        except:
+            pass
     title = "智能外卖助手"
 
     user_session = user_session
