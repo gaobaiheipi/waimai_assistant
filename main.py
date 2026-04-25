@@ -52,11 +52,9 @@ class WaimaiManager(MDScreenManager):
 
 
 class WaimaiApp(MDApp):
-    if hasattr(Window, 'set_icon'):
-        try:
-            Window.set_icon('assets/waimai.png')
-        except:
-            pass
+    def build(self):
+        # 使用 App.icon 属性，兼容 PC 和 Android
+        self.icon = 'assets/waimai.png'
     title = "智能外卖助手"
 
     user_session = user_session

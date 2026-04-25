@@ -1,4 +1,4 @@
-name: Build APK with Docker
+nname: Build APK with Docker
 
 on:
   push:
@@ -19,7 +19,7 @@ jobs:
           package.name = waimaiassistant
           package.domain = com.example
           source.dir = .
-          source.include_exts = py,png,jpg,kv,atlas,ttf,ttc,otf
+          source.include_exts = py,png,jpg,jpeg,kv,atlas,ttf,ttc,otf
           version = 0.1
           requirements = python3,kivy==2.3.0,kivymd==1.2.0,requests
           orientation = portrait
@@ -29,12 +29,23 @@ jobs:
           android.minapi = 21
           android.ndk = 25b
           android.sdk = 30
-          # 只打包 64 位，提高兼容性
           android.archs = arm64-v8a
           android.allow_backup = True
           android.accept_sdk_license = True
           log_level = 2
           warn_on_root = 1
+          
+          # 添加图标配置
+          icon.filename = %(source.dir)s/assets/waimai.png
+          
+          # 确保 assets 文件夹被包含
+          android.add_src = assets/
+          
+          # 支持中文字体（避免中文显示方块）
+          android.add_java_src = 
+          android.gradle_dependencies =
+          android.enable_androidx = True
+          android.copy_secrets = False
           EOF
 
           docker run --rm \
