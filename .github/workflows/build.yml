@@ -34,18 +34,18 @@ jobs:
           android.accept_sdk_license = True
           log_level = 2
           warn_on_root = 1
+          
+          # 只定义一次 gradle_dependencies
           android.gradle_dependencies = 'androidx.appcompat:appcompat:1.6.1'
           
-          # 修复 Java 版本问题
+          # Java 版本
           java.source = 11
           java.target = 11
           
+          # 图标配置
           icon.filename = assets/waimai.png
           
-          
-          # 支持中文字体（避免中文显示方块）
-          android.add_java_src = 
-          android.gradle_dependencies =
+          # Android 配置
           android.enable_androidx = True
           android.copy_secrets = False
           EOF
