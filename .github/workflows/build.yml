@@ -1,4 +1,4 @@
-nname: Build APK with Docker
+name: Build APK with Docker
 
 on:
   push:
