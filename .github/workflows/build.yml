@@ -19,7 +19,7 @@ jobs:
           package.name = waimaiassistant
           package.domain = com.example
           source.dir = .
-          source.include_exts = py,png,jpg,jpeg,kv,atlas,ttf,ttc,otf
+          source.include_exts = py,png,jpg,kv,atlas,ttf,ttc,otf
           version = 0.1
           requirements = python3,kivy==2.3.0,kivymd==1.2.0,requests
           orientation = portrait
@@ -34,20 +34,7 @@ jobs:
           android.accept_sdk_license = True
           log_level = 2
           warn_on_root = 1
-          
-          # 只定义一次 gradle_dependencies
-          android.gradle_dependencies = 'androidx.appcompat:appcompat:1.6.1'
-          
-          # Java 版本
-          java.source = 11
-          java.target = 11
-          
-          # 图标配置
           icon.filename = assets/waimai.png
-          
-          # Android 配置
-          android.enable_androidx = True
-          android.copy_secrets = False
           EOF
 
           docker run --rm \
