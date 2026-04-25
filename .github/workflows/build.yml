@@ -36,8 +36,6 @@ jobs:
           warn_on_root = 1
           
            icon.filename = assets/waimai.png
-#          icon.adaptive_foreground.filename = assets/waimai.png
-#          icon.adaptive_background.filename = assets/waimai.png
           
           # 支持中文字体（避免中文显示方块）
           android.add_java_src = 
