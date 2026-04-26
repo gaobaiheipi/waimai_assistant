@@ -14,6 +14,7 @@ from kivymd.uix.card import MDCard
 from kivymd.uix.dialog import MDDialog
 
 from services.local_auth import user_session, local_auth
+from services.order_stats import order_stats
 
 from utils.fonts import chinese_font
 
@@ -42,14 +43,14 @@ class PreferencesScreen(MDScreen):
         Clock.schedule_once(self._fix_chinese_display, 0)
         Clock.schedule_once(self._update_ui, 0.1)
 
+        # 检查是否需要显示订单总结弹窗（非游客模式）
+        if not user_session.is_guest:
+            Clock.schedule_once(self._check_order_summary_popup, 0.5)
+
     def _fix_chinese_display(self, dt):
         """修复中文显示：遍历所有子部件设置中文字体"""
-        import sys
-        main_module = sys.modules.get('__main__')
-        chinese_font = getattr(main_module, 'chinese_font', None)
-
         if not chinese_font:
-            chinese_font = "C:/Windows/Fonts/msyh.ttc"
+            return
 
         for child in self.walk():
             if hasattr(child, 'font_name') and hasattr(child, 'text'):
@@ -175,12 +176,6 @@ class PreferencesScreen(MDScreen):
 
     def confirm_remove_avoid(self, food):
         """确认删除忌口"""
-        import sys
-        main_module = sys.modules.get('__main__')
-        chinese_font = getattr(main_module, 'chinese_font', None)
-        if not chinese_font:
-            chinese_font = "C:/Windows/Fonts/msyh.ttc"
-
         dialog = MDDialog(
             title="删除忌口",
             text=f"确定要删除 {food} 吗？",
@@ -197,11 +192,12 @@ class PreferencesScreen(MDScreen):
         )
 
         def fix_dialog_font(dt):
-            for child in dialog.walk():
-                if hasattr(child, 'font_name') and hasattr(child, 'text'):
-                    text = str(child.text)
-                    if any('\u4e00' <= c <= '\u9fff' for c in text):
-                        child.font_name = chinese_font
+            if chinese_font:
+                for child in dialog.walk():
+                    if hasattr(child, 'font_name') and hasattr(child, 'text'):
+                        text = str(child.text)
+                        if self._contains_chinese(text):
+                            child.font_name = chinese_font
 
         dialog.open()
         Clock.schedule_once(fix_dialog_font, 0.05)
@@ -212,6 +208,114 @@ class PreferencesScreen(MDScreen):
             self.avoid_foods.remove(food)
             self._update_avoid_list()
             MDSnackbar(MDLabel(text=f"已删除：{food}")).open()
+
+    # ========== 订单总结弹窗 ==========
+
+    def _check_order_summary_popup(self, dt):
+        """检查并显示订单总结弹窗"""
+        if user_session.is_guest:
+            return
+
+        result = order_stats.get_order_summary_popup()
+
+        if result.get('should_show'):
+            self._show_order_summary_dialog(result['summary'])
+
+    def _show_order_summary_dialog(self, summary):
+        """显示订单总结弹窗"""
+        avg_budget = summary.get('avg_budget', 30)
+        spicy = summary.get('spicy', '微辣')
+        orders_since_last = summary.get('orders_since_last', 20)
+
+        content_layout = MDBoxLayout(
+            orientation="vertical",
+            spacing=dp(10),
+            padding=dp(20),
+            adaptive_height=True
+        )
+
+        message = (
+            f"您最近 {orders_since_last} 个订单总结偏好\n\n"
+            f"预算：{avg_budget} 元\n"
+            f"辣度：{spicy}\n\n"
+            f"是否更新偏好设置？"
+        )
+
+        msg_label = MDLabel(
+            text=message,
+            halign="left",
+            size_hint_y=None,
+            height=dp(150)
+        )
+        if chinese_font:
+            msg_label.font_name = chinese_font
+
+        content_layout.add_widget(msg_label)
+
+        def apply_preferences(*args):
+            """应用弹窗中的偏好"""
+            current_prefs = user_session.get_prefs()
+            current_prefs['default_budget'] = avg_budget
+            current_prefs['budget_range'] = str(avg_budget)
+            current_prefs['spicy_level'] = spicy
+            current_prefs['spiciness_level'] = spicy
+
+            user_session.update_prefs(current_prefs)
+
+            from services.order_stats import order_stats
+            prefs = user_session.get_prefs()
+            prefs['last_summary_order_count'] = len(order_stats.get_non_drink_orders())
+            user_session.update_prefs(prefs)
+
+            self.load_preferences()
+            self._update_ui(0)
+
+            dialog.dismiss()
+            self.show_snackbar("偏好已更新")
+
+        def cancel_and_update_count(*args):
+            """取消但更新计数"""
+            from services.order_stats import order_stats
+            prefs = user_session.get_prefs()
+            prefs['last_summary_order_count'] = len(order_stats.get_non_drink_orders())
+            user_session.update_prefs(prefs)
+            dialog.dismiss()
+
+        dialog = MDDialog(
+            title="订单总结",
+            type="custom",
+            content_cls=content_layout,
+            buttons=[
+                MDFlatButton(
+                    text="取消",
+                    on_release=lambda x: cancel_and_update_count()
+                ),
+                MDRaisedButton(
+                    text="修改偏好",
+                    on_release=lambda x: apply_preferences()
+                )
+            ]
+        )
+
+        # 设置字体
+        if chinese_font:
+            if hasattr(dialog, 'title_label'):
+                dialog.title_label.font_name = chinese_font
+            for btn in dialog.buttons:
+                if hasattr(btn, 'font_name'):
+                    btn.font_name = chinese_font
+
+        dialog.open()
+
+        # 设置字体
+        if chinese_font:
+            if hasattr(dialog, 'title_label'):
+                dialog.title_label.font_name = chinese_font
+            for btn in dialog.buttons:
+                if hasattr(btn, 'font_name'):
+                    btn.font_name = chinese_font
+
+        dialog.open()
 
     # ========== 保存设置 ==========
 
@@ -278,7 +382,6 @@ class PreferencesScreen(MDScreen):
     def logout(self):
         """退出登录"""
         # 清空聊天记录
-
         chat_screen = self.manager.get_screen('chat')
         chat_screen.messages = []
         chat_screen.clear_chat()
@@ -286,7 +389,6 @@ class PreferencesScreen(MDScreen):
         # 清空Qwen服务中的推荐历史
         from services.qwen_local import get_qwen_service
         qwen = get_qwen_service()
-        qwen.has_recommendation_history = False
         qwen.conversation_context = {
             "last_budget": 30,
             "last_keyword": None,
@@ -297,6 +399,8 @@ class PreferencesScreen(MDScreen):
             "current_order": None,
             "last_search_params": None,
             "recommended_ids": [],
+            "recommended_restaurant_ids": [],
+            "recommended_broth_ids": [],
         }
 
         # 退出登录
@@ -308,17 +412,12 @@ class PreferencesScreen(MDScreen):
         """显示修改密码对话框"""
         from kivy.uix.boxlayout import BoxLayout
 
-        import sys
-        main_module = sys.modules.get('__main__')
-        chinese_font = getattr(main_module, 'chinese_font', "C:/Windows/Fonts/msyh.ttc")
-
         content = BoxLayout(orientation='vertical', spacing=dp(10), padding=dp(20), size_hint_y=None, height=dp(200))
 
         old_pass = MDTextField(
             hint_text="旧密码",
             password=True,
             mode="rectangle",
-            font_name=chinese_font,
             helper_text="请输入当前密码",
             helper_text_mode="on_focus",
         )
@@ -327,7 +426,6 @@ class PreferencesScreen(MDScreen):
             hint_text="新密码",
             password=True,
             mode="rectangle",
-            font_name=chinese_font,
             helper_text="请输入新密码",
             helper_text_mode="on_focus",
         )
@@ -336,10 +434,14 @@ class PreferencesScreen(MDScreen):
             hint_text="确认新密码",
             password=True,
             mode="rectangle",
-            font_name=chinese_font,
             helper_text="请再次输入新密码",
             helper_text_mode="on_focus",
         )
+
+        if chinese_font:
+            old_pass.font_name = chinese_font
+            new_pass.font_name = chinese_font
+            confirm_pass.font_name = chinese_font
 
         content.add_widget(old_pass)
         content.add_widget(new_pass)
@@ -380,23 +482,21 @@ class PreferencesScreen(MDScreen):
             buttons=[
                 MDFlatButton(
                     text="取消",
-                    font_name=chinese_font,
                     on_release=lambda x: dialog.dismiss()
                 ),
                 MDRaisedButton(
                     text="确认修改",
-                    font_name=chinese_font,
                     on_release=do_change_password
                 ),
             ],
         )
 
-        def fix_dialog_font(dt):
-            for child in dialog.walk():
-                if hasattr(child, 'font_name') and hasattr(child, 'text'):
-                    text = str(child.text)
-                    if any('\u4e00' <= c <= '\u9fff' for c in text):
-                        child.font_name = chinese_font
+        # 设置字体
+        if chinese_font:
+            if hasattr(dialog, 'title_label'):
+                dialog.title_label.font_name = chinese_font
+            for btn in dialog.buttons:
+                if hasattr(btn, 'font_name'):
+                    btn.font_name = chinese_font
 
         dialog.open()
-        Clock.schedule_once(fix_dialog_font, 0.05)

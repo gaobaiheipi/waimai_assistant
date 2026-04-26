@@ -118,6 +118,7 @@ class ChatScreen(MDScreen):
         """显示加载对话框（修复中文显示）"""
         from kivymd.uix.spinner import MDSpinner
         from kivymd.uix.boxlayout import MDBoxLayout
+        from kivymd.uix.label import MDLabel
         from kivy.metrics import dp
         from utils.fonts import chinese_font
 
@@ -150,17 +151,13 @@ class ChatScreen(MDScreen):
             content_cls=content
         )
 
-        # 延迟设置对话框标题字体（确保控件已创建）
-        def fix_dialog_title(dt):
-            if self.loading_dialog and hasattr(self.loading_dialog, 'title_label'):
-                self.loading_dialog.title_label.font_name = chinese_font
-            # 同时修复内容中的字体
-            if self.loading_dialog and hasattr(self.loading_dialog, 'content_cls'):
-                for child in self.loading_dialog.content_cls.children:
-                    if hasattr(child, 'font_name'):
-                        child.font_name = chinese_font
-
-        Clock.schedule_once(fix_dialog_title, 0.1)
+        # 设置对话框标题字体
+        if hasattr(self.loading_dialog, 'title_label'):
+            self.loading_dialog.title_label.font_name = chinese_font
+        # 设置内容字体
+        for child in self.loading_dialog.content_cls.children:
+            if hasattr(child, 'font_name'):
+                child.font_name = chinese_font
 
         self.loading_dialog.open()
 

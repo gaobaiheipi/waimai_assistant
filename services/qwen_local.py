@@ -13,6 +13,7 @@ import sys
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data.mock_restaurants import get_recommendations, get_restaurant, RESTAURANTS, DISHES_BY_RESTAURANT
+from services.local_auth import user_session
 
 
 class QwenRouterService:
@@ -37,6 +38,9 @@ class QwenRouterService:
         # 对话上下文记忆
         self.conversation_context = {
             "last_budget": 30,
+            "last_budget_min": None,
+            "last_budget_max": None,
+            "last_budget_type": "exact",
             "last_keyword": None,
             "last_cuisine": None,
             "last_spicy": "微辣",
@@ -45,8 +49,11 @@ class QwenRouterService:
             "current_order": None,
             "last_search_params": None,
             "recommended_ids": [],
-            "recommended_restaurant_ids": [],  # 火锅/串串已推荐的餐厅ID
-            "recommended_broth_ids": [],  # 已推荐的锅底ID
+            "recommended_restaurant_ids": [],
+            "recommended_broth_ids": [],
+            "user_frequent_dishes": None,
+            "user_frequent_restaurants": None,
+            "try_new_mode": False,
         }
 
         # 工作流触发词
@@ -191,6 +198,54 @@ class QwenRouterService:
 
     # ========== 辅助方法 ==========
 
+    def _parse_budget_from_input(self, user_input: str, default_budget: int = 30) -> dict:
+        """从用户输入中解析预算信息"""
+        result = {
+            "budget": default_budget,
+            "budget_min": None,
+            "budget_max": None,
+            "budget_type": "exact"
+        }
+
+        # 提取预算数值
+        budget_match = re.search(r'(\d+)', user_input)
+        if budget_match:
+            result["budget"] = int(budget_match.group(1))
+
+        # 解析范围预算
+        if re.search(r'(\d+)[-到](\d+)', user_input):
+            result["budget_type"] = "range"
+            match = re.search(r'(\d+)[-到](\d+)', user_input)
+            if match:
+                result["budget_min"] = int(match.group(1))
+                result["budget_max"] = int(match.group(2))
+                result["budget"] = (result["budget_min"] + result["budget_max"]) // 2
+        # 解析以内预算
+        elif re.search(r'(\d+)(?:元|块)?(?:以内|以下|内)', user_input):
+            result["budget_type"] = "within"
+            match = re.search(r'(\d+)(?:元|块)?(?:以内|以下|内)', user_input)
+            if match:
+                result["budget_max"] = int(match.group(1))
+                result["budget_min"] = 0
+                result["budget"] = result["budget_max"]
+        # 解析左右预算
+        elif re.search(r'(\d+)(?:元|块)?(?:左右|上下|大约)', user_input):
+            result["budget_type"] = "around"
+            match = re.search(r'(\d+)(?:元|块)?(?:左右|上下|大约)', user_input)
+            if match:
+                base = int(match.group(1))
+                result["budget"] = base
+                result["budget_min"] = base - 5
+                result["budget_max"] = base + 5
+        else:
+            # 精确预算
+            result["budget_type"] = "exact"
+            result["budget_min"] = int(result["budget"] * 0.9)
+            result["budget_max"] = int(result["budget"] * 1.1)
+
+        print(f"[预算解析] {result['budget_type']}: {result['budget_min']}-{result['budget_max']}元")
+        return result
+
     def _parse_user_intent(self, user_input: str, user_prefs: dict) -> dict:
         """解析用户意图（规则匹配，作为AI的兜底）"""
         result = {
@@ -212,44 +267,11 @@ class QwenRouterService:
         user_input_lower = user_input.lower()
 
         # ========== 预算解析 ==========
-
-        range_match = re.search(r'(\d+)[-到](\d+)(?:元|块|块钱)?', user_input)
-        if range_match:
-            result["budget_min"] = int(range_match.group(1))
-            result["budget_max"] = int(range_match.group(2))
-            result["budget"] = (result["budget_min"] + result["budget_max"]) // 2
-            result["budget_type"] = "range"
-            print(f"[预算解析] 范围: {result['budget_min']}-{result['budget_max']}元")
-
-        # 2. 以内/以下预算：30以内、30以下、30内（0到上限）
-        within_match = re.search(r'(\d+)(?:元|块|块钱)?(?:以内|以下|内)', user_input)
-        if within_match:
-            result["budget_max"] = int(within_match.group(1))
-            result["budget_min"] = 0
-            result["budget"] = result["budget_max"]
-            result["budget_type"] = "within"
-            print(f"[预算解析] 以内: 0-{result['budget_max']}元")
-
-        # 3. 左右预算：30左右、30上下、大约30（上下浮动5元）
-        around_match = re.search(r'(\d+)(?:元|块|块钱)?(?:左右|上下|大约|大概)', user_input)
-        if around_match:
-            base = int(around_match.group(1))
-            result["budget_min"] = max(0, base - 5)
-            result["budget_max"] = base + 5
-            result["budget"] = base
-            result["budget_type"] = "around"
-            print(f"[预算解析] 左右: {result['budget_min']}-{result['budget_max']}元")
-
-        # 4. 精确预算：30、30元（上下浮动10%）
-        if result["budget"] is None:
-            exact_match = re.search(r'(\d+)(?:元|块|块钱)?', user_input)
-            if exact_match:
-                base = int(exact_match.group(1))
-                result["budget"] = base
-                result["budget_min"] = int(base * 0.9)
-                result["budget_max"] = int(base * 1.1)
-                result["budget_type"] = "exact"
-                print(f"[预算解析] 精确: {result['budget']}元 (范围: {result['budget_min']}-{result['budget_max']}元)")
+        budget_info = self._parse_budget_from_input(user_input, user_prefs.get('default_budget', 30))
+        result["budget"] = budget_info["budget"]
+        result["budget_min"] = budget_info["budget_min"]
+        result["budget_max"] = budget_info["budget_max"]
+        result["budget_type"] = budget_info["budget_type"]
 
         # ========== 菜系解析 ==========
         cuisines = ["川菜", "粤菜", "湘菜", "东北菜", "日料", "韩餐", "西餐", "火锅", "小吃", "轻食",
@@ -259,6 +281,10 @@ class QwenRouterService:
             if c in user_input:
                 result["cuisine"] = c
                 break
+
+        # 如果菜系是甜品或饮品，辣度默认不辣
+        if result["cuisine"] in ["甜品", "饮品"]:
+            result["spicy"] = "不辣"
 
         # ========== 辣度解析 ==========
         if re.search(r'不吃辣|不要辣|我不吃辣', user_input_lower):
@@ -278,8 +304,11 @@ class QwenRouterService:
         # ========== 意图判断 ==========
         user_lower = user_input.lower()
 
+        # 尝试新的请求
+        if re.search(r'想尝试新的|尝试新|换换口味|新口味', user_lower):
+            result["action"] = "recommend_new"
         # 修改指令
-        if re.search(r'提高预算|降低预算|更贵|更便宜|改为|换成|不要|排除|换一批|重新推荐', user_lower):
+        elif re.search(r'提高预算|降低预算|更贵|更便宜|改为|换成|不要|排除|换一批|重新推荐', user_lower):
             result["action"] = "modify"
         # 下单指令
         elif re.search(r'下单|确认|就这个', user_lower):
@@ -324,22 +353,26 @@ class QwenRouterService:
     2. re_recommend - 用户对当前推荐不满意，想要换一批新的推荐。
        典型说法：换一批、重新推荐、再来一批、换一家、别的
 
-    3. modify - 用户想修改筛选条件（预算、口味、忌口、菜系、排除特定菜品）。
+    3. recommend_new - 用户想要尝试新的口味，排除常点菜品。
+       典型说法：新的、尝试新、新口味
+
+    4. modify - 用户想修改筛选条件（预算、口味、忌口、菜系、排除特定菜品）。
        典型说法：提高预算、降低预算、改为、换成、不要XX、排除XX、更贵、更便宜、改成川菜、不要夫妻肺片
 
-    4. order - 用户已经看到了推荐，明确要下单购买。
+    5. order - 用户已经看到了推荐，明确要下单购买。
        典型说法：下单、确认订单、就这个、付款、我要这个
 
-    5. query - 用户查询订单状态。
+    6. query - 用户查询订单状态。
        典型说法：订单状态、到哪了、查询订单
 
-    6. cancel - 用户取消当前操作。
+    7. cancel - 用户取消当前操作。
        典型说法：取消、不要了、算了
 
     关键区分规则：
     - 说"不要XX"（如不要香菜、不要夫妻肺片）→ modify，不是 recommend
     - 说"帮我点XXX" → recommend
     - 说"换一批" → re_recommend
+    - 说"想尝试新的" → recommend_new
     - 说"就这个" → order
 
     预算提取规则：
@@ -360,6 +393,9 @@ class QwenRouterService:
     输入："换一批"
     输出：{{"action":"re_recommend", "budget":null, "budget_min":null, "budget_max":null, "budget_type":null, "cuisine":null, "spicy":null, "avoid":[]}}
 
+    输入："想尝试新的"
+    输出：{{"action":"recommend_new", "budget":null, "budget_min":null, "budget_max":null, "budget_type":null, "cuisine":null, "spicy":null, "avoid":[]}}
+
     输入："不要夫妻肺片"
     输出：{{"action":"modify", "budget":null, "budget_min":null, "budget_max":null, "budget_type":null, "cuisine":null, "spicy":null, "avoid":["夫妻肺片"]}}
 
@@ -374,7 +410,7 @@ class QwenRouterService:
 
         messages = [
             {"role": "system",
-             "content": "你是外卖助手意图识别器。只返回JSON。action字段必须是小写英文字母和下划线，例如 recommend、re_recommend、modify、order、query、cancel。不要返回其他格式。"},
+             "content": "你是外卖助手意图识别器。只返回JSON。action字段必须是小写英文字母和下划线，例如 recommend、re_recommend、recommend_new、modify、order、query、cancel。不要返回其他格式。"},
             {"role": "user", "content": prompt}
         ]
 
@@ -460,6 +496,17 @@ class QwenRouterService:
         exclude_ids = exclude_ids or []
         avoid = avoid or []
 
+        # 获取常点信息
+        try_new_mode = self.conversation_context.get('try_new_mode', False)
+        frequent_dish_names = []
+        frequent_restaurant_names = []
+
+        if not try_new_mode:
+            frequent_dishes = self.conversation_context.get('user_frequent_dishes', [])
+            frequent_restaurants = self.conversation_context.get('user_frequent_restaurants', [])
+            frequent_dish_names = [d[0] for d in frequent_dishes[:3]] if frequent_dishes else []
+            frequent_restaurant_names = [r[0] for r in frequent_restaurants[:3]] if frequent_restaurants else []
+
         def match_spicy(dish_spicy: str, user_spicy: str) -> bool:
             if not user_spicy or user_spicy == "不限":
                 return True
@@ -495,9 +542,32 @@ class QwenRouterService:
             if dish["id"] in exclude_ids:
                 continue
 
+            # 标记是否为常点
+            is_frequent = False
+            if dish_name in frequent_dish_names:
+                is_frequent = True
+            elif restaurant["name"] in frequent_restaurant_names:
+                is_frequent = True
+
+            rec['is_frequent'] = is_frequent
             filtered.append(rec)
 
-        filtered.sort(key=lambda x: (-x["restaurant"]["rating"], x["dish"]["price"]))
+        # 排序
+        if try_new_mode:
+            # 尝试新模式：常点排后
+            filtered.sort(key=lambda x: (
+                x.get('is_frequent', False),
+                -x["restaurant"]["rating"],
+                x["dish"]["price"]
+            ))
+        else:
+            # 正常模式：常点优先
+            filtered.sort(key=lambda x: (
+                -x.get('is_frequent', False),
+                -x["restaurant"]["rating"],
+                x["dish"]["price"]
+            ))
+
         return filtered
 
     def _get_recommendations_from_mock(self, budget: float, keyword: str = None,
@@ -537,17 +607,68 @@ class QwenRouterService:
                                                       avoid: list = None, exclude_ids: list = None,
                                                       budget_min: float = None, budget_max: float = None,
                                                       budget_type: str = "exact") -> list:
-        """从 mock 数据集获取推荐（排除火锅和串串）"""
+        """从 mock 数据集获取推荐（排除火锅、串串、甜品、饮品）"""
         all_items = self._get_all_dishes_with_restaurant()
 
-        # 过滤掉火锅和串串餐厅的菜品
+        # 甜品关键词
+        dessert_keywords = ["蛋糕", "慕斯", "芝士", "提拉米苏", "泡芙", "马卡龙", "布丁", "双皮奶", "班戟", "千层", "冰淇淋",
+                            "甜品", "甜点", "奶油", "巧克力蛋糕", "芒果慕斯", "芝士蛋糕", "杨枝甘露"]
+
+        # 饮品关键词
+        drinks_keywords = ["奶茶", "咖啡", "柠檬茶", "果茶", "拿铁", "卡布奇诺", "美式", "焦糖", "抹茶", "百香果", "金桔",
+                           "养乐多", "可乐", "雪碧", "果汁", "红茶", "绿茶", "乌龙茶", "奶盖", "波霸", "珍珠", "椰奶"]
+
+        # 甜品饮品菜系
+        dessert_drink_cuisines = ["甜品", "饮品"]
+
         filtered_items = []
         for item in all_items:
             restaurant_cuisine = item["restaurant"]["cuisine"]
-            if restaurant_cuisine != "火锅" and restaurant_cuisine != "串串":
-                filtered_items.append(item)
+            dish_name = item["dish"]["name"]
 
-        print(f"[排除火锅串串] 剩余菜品数: {len(filtered_items)}")
+            # 排除火锅和串串
+            if restaurant_cuisine == "火锅" or restaurant_cuisine == "串串":
+                continue
+
+             # 如果用户指定了菜系为甜品或饮品，则保留该类菜品，不排除
+            if cuisine in dessert_drink_cuisines:
+                # 用户想要甜品或饮品，只保留对应菜系的菜品
+                if restaurant_cuisine != cuisine:
+                    continue
+                # 同时按关键词保留
+                is_match = False
+                if cuisine == "饮品":
+                    for kw in drinks_keywords:
+                        if kw in dish_name:
+                            is_match = True
+                            break
+                elif cuisine == "甜品":
+                    for kw in dessert_keywords:
+                        if kw in dish_name:
+                            is_match = True
+                            break
+                if not is_match:
+                    continue
+            else:
+                # 用户未指定甜品饮品菜系时，排除甜品和饮品
+                if restaurant_cuisine in dessert_drink_cuisines:
+                    continue
+                is_dessert_or_drink = False
+                for kw in dessert_keywords:
+                    if kw in dish_name:
+                        is_dessert_or_drink = True
+                        break
+                if not is_dessert_or_drink:
+                    for kw in drinks_keywords:
+                        if kw in dish_name:
+                            is_dessert_or_drink = True
+                            break
+                if is_dessert_or_drink:
+                    continue
+
+            filtered_items.append(item)
+
+        print(f"[排除火锅串串甜品饮品] 剩余菜品数: {len(filtered_items)}")
 
         # 统一的预算筛选逻辑
         if budget_type == "range" and budget_min is not None and budget_max is not None:
@@ -659,7 +780,7 @@ class QwenRouterService:
                 min_side_price = min(s["dish"]["price"] for s in side_dishes)
                 if budget < broth_price + min_side_price:
                     print(f"[火锅] 预算{budget}元只够锅底({broth_price}元)，不够配菜({min_side_price}元)，跳过此餐厅")
-                    continue  # 预算不够，换下一家餐厅
+                    continue
 
             # 如果预算刚刚够锅底，没有剩余钱买配菜，也不推荐
             remaining_budget = budget - broth_price
@@ -867,7 +988,10 @@ class QwenRouterService:
             dish = rec["dish"]
             restaurant = rec["restaurant"]
             price = f"{dish['price']:.2f}"
-            content += f"{i}. {dish['name']} - {restaurant['name']}\n"
+
+            frequent_tag = "（你的常点）" if rec.get('is_frequent', False) else ""
+
+            content += f"{i}. {dish['name']}{frequent_tag} - {restaurant['name']}\n"
             content += f"   评分{restaurant['rating']}分 | {price}元 | {restaurant['delivery_time']}分钟\n"
             content += f"   {dish.get('description', '人气推荐')}\n\n"
 
@@ -882,66 +1006,123 @@ class QwenRouterService:
 
     def _handle_recommend(self, user_input: str, user_prefs: dict) -> dict:
         """处理推荐请求（全新推荐）"""
-        # 解析用户输入
-        budget = user_prefs.get('default_budget', 30)
+        # 解析预算信息
+        budget_info = self._parse_budget_from_input(user_input, user_prefs.get('default_budget', 30))
+        budget = budget_info["budget"]
+        budget_min = budget_info["budget_min"]
+        budget_max = budget_info["budget_max"]
+        budget_type = budget_info["budget_type"]
         cuisine = None
         spicy = user_prefs.get('spicy_level', '微辣')
         avoid = []
         specific_dish = None
+        specific_restaurant = None
 
-        # 提取预算
-        budget_match = re.search(r'(\d+)', user_input)
-        if budget_match:
-            budget = int(budget_match.group(1))
-
-        # 提取菜系
-        cuisines = ["川菜", "粤菜", "湘菜", "东北菜", "日料", "韩餐", "西餐", "火锅", "小吃", "轻食",
-                    "西北菜", "东南亚", "港式", "清真", "新疆菜", "台湾菜", "京菜", "素食", "海鲜", "鲁菜", "甜品"]
-        for c in cuisines:
-            if c in user_input:
-                cuisine = c
-                break
-
-        # 提取辣度
-        if "不辣" in user_input or "不吃辣" in user_input:
-            spicy = "不辣"
-        elif "微辣" in user_input:
-            spicy = "微辣"
-        elif "中辣" in user_input:
-            spicy = "中辣"
-        elif "特辣" in user_input:
-            spicy = "特辣"
-
-        # 提取具体菜品
         all_dish_names = self._get_all_dish_names()
         for dish in all_dish_names:
             if dish in user_input:
                 specific_dish = dish
+                print(f"[菜品匹配] 匹配到具体菜品: {dish}")
                 break
 
-        # 提取忌口 - 简单直接的方案
-        # 查找所有 "不要" 后面的内容，直到遇到标点符号或结尾
-        # 匹配 "不要" 后跟2到6个非标点字符
+        all_restaurant_names = self._get_all_restaurant_names()
+        for restaurant in all_restaurant_names:
+            if restaurant in user_input:
+                specific_restaurant = restaurant
+                print(f"[餐厅匹配] 匹配到具体餐厅: {restaurant}")
+                for r in RESTAURANTS:
+                    if r["name"] == restaurant:
+                        cuisine = r["cuisine"]
+                        print(f"[餐厅匹配] 菜系确定为: {cuisine}")
+                        break
+                break
+
+        if specific_dish is not None:
+            print(f"[菜品匹配] 已匹配到菜品，跳过菜系关键词匹配")
+        else:
+            # 解析菜系
+            cuisine = None
+            spicy = user_prefs.get('spicy_level', '微辣')
+            avoid = []
+            specific_dish = None
+
+            cuisine_keywords = {
+                "川菜": ["川菜", "川味", "麻辣"],
+                "粤菜": ["粤菜", "广式", "广东菜"],
+                "湘菜": ["湘菜", "湖南菜"],
+                "东北菜": ["东北菜", "东北"],
+                "日料": ["日料", "日本料理", "寿司", "刺身", "拉面"],
+                "韩餐": ["韩餐", "韩国料理", "韩式", "炸鸡", "年糕"],
+                "西餐": ["西餐", "西式", "牛排", "意面", "披萨"],
+                "火锅": ["火锅", "涮锅"],
+                "小吃": ["小吃", "麻辣烫", "炸串"],
+                "轻食": ["轻食", "沙拉", "健康餐"],
+                "西北菜": ["西北菜", "西北"],
+                "东南亚": ["东南亚", "泰式", "越南"],
+                "港式": ["港式", "茶餐厅"],
+                "清真": ["清真"],
+                "新疆菜": ["新疆菜", "新疆"],
+                "台湾菜": ["台湾菜", "台湾"],
+                "京菜": ["京菜", "北京菜"],
+                "素食": ["素食", "素菜"],
+                "海鲜": ["海鲜"],
+                "鲁菜": ["鲁菜", "山东菜"],
+                "甜品": ["甜品", "甜点", "蛋糕", "冰淇淋", "布丁", "双皮奶", "杨枝甘露", "慕斯", "提拉米苏"],
+                "烧烤": ["烧烤", "烤串"],
+                "串串": ["串串", "串串香"],
+                "饮品": ["奶茶", "咖啡", "果汁", "茶饮", "柠檬茶", "果茶", "拿铁", "卡布奇诺", "美式", "可乐", "雪碧",
+                         "饮品"],
+            }
+
+            for cuisine_name, keywords in cuisine_keywords.items():
+                for kw in keywords:
+                    if kw in user_input:
+                        cuisine = cuisine_name
+                        print(f"[菜系解析] 关键词 '{kw}' 匹配到菜系: {cuisine}")
+                        break
+                if cuisine is not None:
+                    break
+
+            cuisines = ["川菜", "粤菜", "湘菜", "东北菜", "日料", "韩餐", "西餐", "火锅", "小吃", "轻食",
+                        "西北菜", "东南亚", "港式", "清真", "新疆菜", "台湾菜", "京菜", "素食", "海鲜", "鲁菜", "甜品",
+                        "烧烤", "串串", "饮品"]
+            for c in cuisines:
+                if c in user_input:
+                    cuisine = c
+                    break
+            pass
+
+        # 如果菜系是甜品或饮品，辣度默认不辣
+        if cuisine == "甜品" or cuisine == "饮品":
+            spicy = "不辣"
+            print(f"[推荐] 菜系为{cuisine}，辣度自动设为不辣")
+
+        # 提取辣度
+        if "不辣" in user_input or "不吃辣" in user_input:
+            spicy = "不辣"
+        elif "特辣" in user_input:
+            spicy = "特辣"
+        elif "中辣" in user_input:
+            spicy = "中辣"
+        elif "微辣" in user_input:
+            spicy = "微辣"
+
+        # 提取忌口
         avoid_pattern = r'不要([\u4e00-\u9fa5]{2,6})(?=[，,。！？\s]|$)'
         avoid_matches = re.findall(avoid_pattern, user_input)
 
         for avoid_item in avoid_matches:
-            # 排除 "吃辣" 这种情况（已经由辣度处理）
             if avoid_item == "吃辣" or "辣" in avoid_item:
                 continue
             if avoid_item not in avoid:
                 avoid.append(avoid_item)
                 print(f"[忌口解析] 添加忌口: {avoid_item}")
 
-        # 如果没有匹配到，尝试更简单的分割方式
         if not avoid:
-            # 如果用户输入包含"不要"，尝试提取
             if "不要" in user_input:
                 parts = user_input.split("不要")
                 if len(parts) > 1:
-                    # 提取第一个"不要"后面的内容，取前几个字符
                     after_buyao = parts[1]
-                    # 提取连续的汉字
                     chinese_match = re.search(r'^([\u4e00-\u9fa5]{2,6})', after_buyao)
                     if chinese_match:
                         candidate = chinese_match.group(1)
@@ -949,59 +1130,75 @@ class QwenRouterService:
                             avoid.append(candidate)
                             print(f"[忌口解析] 备用方案添加: {candidate}")
 
-        print(f"[全新推荐] 预算: {budget}, 菜系: {cuisine}, 辣度: {spicy}, 忌口: {avoid}")
+        print(f"[全新推荐] 预算: {budget} ({budget_type}: {budget_min}-{budget_max}), 菜系: {cuisine}, 辣度: {spicy}, 忌口: {avoid}")
 
         # 获取排除列表
         exclude_ids = self.conversation_context.get("recommended_ids", [])
 
         # ========== 优先规则 ==========
-        # 1. 用户明确指定了菜系，直接按指定菜系推荐
+        if specific_restaurant:
+            print(f"[推荐] 用户指定餐厅: {specific_restaurant}")
+            return self._handle_specific_restaurant_recommend(
+                specific_restaurant, budget, spicy, avoid, user_input, user_prefs,
+                budget_min, budget_max, budget_type
+            )
+
+        if specific_dish:
+            print(f"[推荐] 用户指定菜品: {specific_dish}")
+            return self._handle_specific_dish_recommend(
+                specific_dish, budget, spicy, avoid, user_input, user_prefs,
+                budget_min, budget_max, budget_type
+            )
+
         if cuisine is not None:
             print(f"[推荐] 用户指定菜系: {cuisine}")
             if cuisine == "火锅":
-                return self._handle_hotpot_recommend(budget, spicy, avoid, user_input, user_prefs)
+                return self._handle_hotpot_recommend(budget, spicy, avoid, user_input, user_prefs,
+                                                     budget_min, budget_max, budget_type)
             elif cuisine == "串串":
-                return self._handle_chuanchuan_recommend(budget, spicy, avoid, user_input, user_prefs)
+                return self._handle_chuanchuan_recommend(budget, spicy, avoid, user_input, user_prefs,
+                                                         budget_min, budget_max, budget_type)
             else:
-                # 其他菜系，普通推荐
-                return self._handle_normal_recommend(budget, spicy, avoid, user_input, user_prefs, cuisine)
+                return self._handle_normal_recommend(budget, spicy, avoid, user_input, user_prefs, cuisine,
+                                                     budget_min, budget_max, budget_type)
 
-        # 2. 用户没有指定菜系，优先普通菜系推荐
         print("[推荐] 用户未指定菜系，优先普通菜系推荐")
 
-        # 先尝试普通推荐（排除火锅和串串）
         normal_recommendations = self._get_recommendations_from_mock_exclude_hotpot(
-            budget, None, None, spicy, avoid, exclude_ids
+            budget, None, None, spicy, avoid, exclude_ids,
+            budget_min, budget_max, budget_type
         )
 
         if normal_recommendations:
             print("[推荐] 找到普通菜系推荐，使用普通格式")
             return self._handle_normal_recommend_with_data(budget, spicy, avoid, user_input, user_prefs,
-                                                           normal_recommendations)
+                                                           normal_recommendations, cuisine,
+                                                           budget_min, budget_max, budget_type)
 
-        # 3. 普通推荐无结果，且预算充足（>=60元），尝试火锅推荐
         if budget >= 60:
             print(f"[推荐] 预算{budget}元充足，尝试火锅推荐")
-            hotpot_rec = self._get_hotpot_recommendations(budget, spicy, avoid)
+            hotpot_rec = self._get_hotpot_recommendations(budget, spicy, avoid, budget_min, budget_max, budget_type)
             if hotpot_rec:
-                return self._handle_hotpot_recommend(budget, spicy, avoid, user_input, user_prefs)
+                return self._handle_hotpot_recommend(budget, spicy, avoid, user_input, user_prefs,
+                                                     budget_min, budget_max, budget_type)
 
             print("[推荐] 火锅推荐失败，尝试串串推荐")
-            chuanchuan_rec = self._get_chuanchuan_recommendations(budget, spicy, avoid)
+            chuanchuan_rec = self._get_chuanchuan_recommendations(budget, spicy, avoid, budget_min, budget_max, budget_type)
             if chuanchuan_rec:
-                return self._handle_chuanchuan_recommend(budget, spicy, avoid, user_input, user_prefs)
+                return self._handle_chuanchuan_recommend(budget, spicy, avoid, user_input, user_prefs,
+                                                         budget_min, budget_max, budget_type)
 
-        # 4. 预算不足或火锅串串都失败，放宽条件再试一次普通推荐
         print("[推荐] 放宽条件，重新尝试普通推荐")
         normal_recommendations = self._get_recommendations_from_mock(
-            budget, None, None, spicy, avoid, exclude_ids
+            budget, None, None, spicy, avoid, exclude_ids,
+            budget_min, budget_max, None, budget_type
         )
 
         if normal_recommendations:
             return self._handle_normal_recommend_with_data(budget, spicy, avoid, user_input, user_prefs,
-                                                           normal_recommendations)
+                                                           normal_recommendations, cuisine,
+                                                           budget_min, budget_max, budget_type)
 
-        # 5. 仍然没有结果
         return {
             "success": True,
             "content": f"没有找到符合条件的菜品。\n当前条件：{spicy}口味，预算{budget}元\n\n建议提高预算或放宽口味限制。",
@@ -1009,30 +1206,233 @@ class QwenRouterService:
             "workflow": None
         }
 
+    def _handle_specific_restaurant_recommend(self, restaurant_name: str, budget: float, spicy: str, avoid: list,
+                                              user_input: str, user_prefs: dict,
+                                              budget_min: float = None, budget_max: float = None,
+                                              budget_type: str = "exact") -> dict:
+        """处理用户指定具体餐厅的推荐"""
+
+        from data.mock_restaurants import RESTAURANTS, DISHES_BY_RESTAURANT
+
+        restaurant = None
+        restaurant_id = None
+        for r in RESTAURANTS:
+            if r["name"] == restaurant_name:
+                restaurant = r
+                restaurant_id = r["id"]
+                break
+
+        if not restaurant:
+            print(f"[指定餐厅] 未找到餐厅: {restaurant_name}，降级为普通推荐")
+            return self._handle_recommend(user_input, user_prefs)
+
+        print(f"[指定餐厅] 找到餐厅: {restaurant_name}, 菜系: {restaurant['cuisine']}")
+
+        # 获取该餐厅的菜品
+        dishes = DISHES_BY_RESTAURANT.get(restaurant_id, [])
+
+        # 过滤菜品
+        recommendations = []
+        for dish in dishes:
+            price = dish["price"]
+            dish_spicy = dish.get("spicy", "微辣")
+
+            # 预算过滤
+            if budget_type == "within":
+                if price > budget_max:
+                    continue
+            elif budget_type == "around":
+                if price < budget_min or price > budget_max:
+                    continue
+            else:
+                if price < budget_min or price > budget_max:
+                    continue
+
+            # 辣度过滤
+            if spicy == "不辣" and dish_spicy != "不辣":
+                continue
+            elif spicy == "微辣" and dish_spicy not in ["不辣", "微辣", "中辣"]:
+                continue
+            elif spicy == "中辣" and dish_spicy not in ["微辣", "中辣", "特辣"]:
+                continue
+            elif spicy == "特辣" and dish_spicy not in ["中辣", "特辣", "麻辣"]:
+                continue
+
+            # 忌口过滤
+            if avoid:
+                if self._contains_avoid_ingredient(dish["name"], avoid):
+                    continue
+
+            recommendations.append({
+                "dish": dish,
+                "restaurant": restaurant,
+            })
+
+        # 按价格排序
+        recommendations.sort(key=lambda x: x["dish"]["price"])
+
+        if not recommendations:
+            cuisine_text = restaurant["cuisine"] if restaurant["cuisine"] else ""
+            return {
+                "success": True,
+                "content": f"抱歉，在{budget}元预算内没有找到{restaurant_name}符合您要求的菜品。\n\n当前条件：{spicy}口味，预算{budget}元\n\n您可以尝试提高预算或修改口味偏好。",
+                "model": "qwen-0.5b (0.5B)" if self.mode == 'local' else "Deepseek",
+                "workflow": None
+            }
+
+        return self._handle_normal_recommend_with_data(budget, spicy, avoid, user_input, user_prefs,
+                                                       recommendations[:5], restaurant["cuisine"],
+                                                       budget_min, budget_max, budget_type)
+
+    def _handle_specific_dish_recommend(self, dish_name: str, budget: float, spicy: str, avoid: list,
+                                        user_input: str, user_prefs: dict,
+                                        budget_min: float = None, budget_max: float = None,
+                                        budget_type: str = "exact") -> dict:
+        """处理用户指定具体菜品的推荐"""
+
+        from data.mock_restaurants import RESTAURANTS, DISHES_BY_RESTAURANT
+
+        # 查找该菜品
+        all_items = self._get_all_dishes_with_restaurant()
+        target_dish = None
+        target_restaurant = None
+
+        for item in all_items:
+            if item["dish"]["name"] == dish_name:
+                target_dish = item["dish"]
+                target_restaurant = item["restaurant"]
+                break
+
+        if not target_dish:
+            print(f"[指定菜品] 未找到菜品: {dish_name}，降级为普通推荐")
+            return self._handle_recommend(user_input, user_prefs)
+
+        print(f"[指定菜品] 找到菜品: {dish_name}, 价格: {target_dish['price']}, 餐厅: {target_restaurant['name']}")
+
+        dish_price = target_dish["price"]
+
+        # 检查是否在预算范围内
+        if budget_type == "within":
+            if dish_price > budget_max:
+                return {
+                    "success": True,
+                    "content": f"您指定的{dish_name}价格为{dish_price}元，超出预算{budget}元。\n\n建议提高预算或选择其他菜品。",
+                    "model": "qwen-0.5b (0.5B)" if self.mode == 'local' else "Deepseek",
+                    "workflow": None
+                }
+        elif budget_type == "around":
+            if dish_price < budget_min or dish_price > budget_max:
+                return {
+                    "success": True,
+                    "content": f"您指定的{dish_name}价格为{dish_price}元，不在预算{budget}元范围内。\n\n建议提高预算或选择其他菜品。",
+                    "model": "qwen-0.5b (0.5B)" if self.mode == 'local' else "Deepseek",
+                    "workflow": None
+                }
+        else:
+            if dish_price < budget_min or dish_price > budget_max:
+                return {
+                    "success": True,
+                    "content": f"您指定的{dish_name}价格为{dish_price}元，不在预算{budget}元范围内。\n\n建议提高预算或选择其他菜品。",
+                    "model": "qwen-0.5b (0.5B)" if self.mode == 'local' else "Deepseek",
+                    "workflow": None
+                }
+
+        # 辣度检查
+        dish_spicy = target_dish.get("spicy", "微辣")
+        if spicy == "不辣" and dish_spicy != "不辣":
+            return {
+                "success": True,
+                "content": f"您指定的{dish_name}辣度为{dish_spicy}，与您的不辣偏好不符。\n\n您可以修改口味偏好或选择其他菜品。",
+                "model": "qwen-0.5b (0.5B)" if self.mode == 'local' else "Deepseek",
+                "workflow": None
+            }
+
+        # 忌口检查
+        if avoid:
+            if self._contains_avoid_ingredient(target_dish["name"], avoid):
+                avoid_text = "、".join(avoid)
+                return {
+                    "success": True,
+                    "content": f"您指定的{dish_name}包含忌口食材（{avoid_text}）。\n\n建议修改忌口设置或选择其他菜品。",
+                    "model": "qwen-0.5b (0.5B)" if self.mode == 'local' else "Deepseek",
+                    "workflow": None
+                }
+
+        # 将指定菜品作为推荐结果
+        recommendations = [{
+            "dish": target_dish,
+            "restaurant": target_restaurant,
+        }]
+
+        # 同时推荐该餐厅的其他推荐菜品
+        other_dishes = []
+        for item in all_items:
+            if item["restaurant"]["id"] == target_restaurant["id"] and item["dish"]["name"] != dish_name:
+                price = item["dish"]["price"]
+                if budget_type == "within":
+                    if price <= budget_max:
+                        other_dishes.append(item)
+                elif budget_type == "around":
+                    if budget_min <= price <= budget_max:
+                        other_dishes.append(item)
+                else:
+                    if budget_min <= price <= budget_max:
+                        other_dishes.append(item)
+
+        # 按价格排序
+        other_dishes.sort(key=lambda x: x["dish"]["price"])
+        recommendations.extend(other_dishes[:4])
+
+        return self._handle_normal_recommend_with_data(budget, spicy, avoid, user_input, user_prefs,
+                                                       recommendations[:5], target_restaurant["cuisine"],
+                                                       budget_min, budget_max, budget_type)
+
     def _handle_normal_recommend_with_data(self, budget: float, spicy: str, avoid: list,
                                            user_input: str, user_prefs: dict,
-                                           recommendations: list) -> dict:
+                                           recommendations: list, cuisine: str = None,
+                                           budget_min: float = None, budget_max: float = None,
+                                           budget_type: str = "exact") -> dict:
         """处理普通推荐（已有推荐数据）"""
+
+        # 分析用户常点菜品和餐厅（仅在首次推荐时分析，非游客模式）
+        if not user_session.is_guest and self.conversation_context.get('user_frequent_dishes') is None:
+            try:
+                from services.order_stats import order_stats
+                user_analysis = order_stats.analyze_user_preferences()
+
+                if user_analysis:
+                    self.conversation_context['user_frequent_dishes'] = user_analysis.get('frequent_dishes', [])
+                    self.conversation_context['user_frequent_restaurants'] = user_analysis.get('frequent_restaurants', [])
+                    print(f"[常点分析] 订单数: {user_analysis.get('total_orders', 0)}")
+                    print(f"[常点分析] 常点菜品: {user_analysis['frequent_dishes'][:3]}")
+                    print(f"[常点分析] 常点餐厅: {user_analysis['frequent_restaurants'][:3]}")
+                else:
+                    self.conversation_context['user_frequent_dishes'] = []
+                    self.conversation_context['user_frequent_restaurants'] = []
+            except Exception as e:
+                print(f"[常点分析] 失败: {e}")
+                self.conversation_context['user_frequent_dishes'] = []
+                self.conversation_context['user_frequent_restaurants'] = []
+
         # 保存搜索参数
         self.conversation_context["last_search_params"] = {
             "budget": budget,
-            "budget_min": None,
-            "budget_max": None,
-            "budget_type": "exact",
+            "budget_min": budget_min,
+            "budget_max": budget_max,
+            "budget_type": budget_type,
             "keyword": None,
-            "cuisine": None,
+            "cuisine": cuisine,
             "spicy": spicy,
             "avoid": avoid.copy(),
             "exclude_restaurant": None,
         }
 
-        # 记录新推荐的ID
         for rec in recommendations:
             if rec["dish"]["id"] not in self.conversation_context["recommended_ids"]:
                 self.conversation_context["recommended_ids"].append(rec["dish"]["id"])
 
         self.conversation_context["last_budget"] = budget
-        self.conversation_context["last_cuisine"] = None
+        self.conversation_context["last_cuisine"] = cuisine
         self.conversation_context["last_spicy"] = spicy
         self.conversation_context["last_avoid"] = avoid
         self.conversation_context["current_recommendations"] = recommendations
@@ -1049,23 +1449,103 @@ class QwenRouterService:
 
     def _handle_normal_recommend(self, budget: float, spicy: str, avoid: list,
                                  user_input: str, user_prefs: dict,
-                                 cuisine: str = None) -> dict:
+                                 cuisine: str = None,
+                                 budget_min: float = None, budget_max: float = None,
+                                 budget_type: str = "exact") -> dict:
         """处理普通推荐"""
         exclude_ids = self.conversation_context.get("recommended_ids", [])
 
         recommendations = self._get_recommendations_from_mock(
-            budget, None, cuisine, spicy, avoid, exclude_ids
+            budget, None, cuisine, spicy, avoid, exclude_ids,
+            budget_min, budget_max, None, budget_type
         )
 
-        return self._handle_normal_recommend_with_data(budget, spicy, avoid, user_input, user_prefs, recommendations)
+        return self._handle_normal_recommend_with_data(budget, spicy, avoid, user_input, user_prefs,
+                                                       recommendations, cuisine,
+                                                       budget_min, budget_max, budget_type)
+
+    def _handle_recommend_new(self, user_input: str, user_prefs: dict) -> dict:
+        """处理"尝试新的"推荐请求"""
+        last_params = self.conversation_context.get("last_search_params")
+
+        if not last_params:
+            print("[尝试新的] 没有历史记录，降级为普通推荐")
+            return self._handle_recommend(user_input, user_prefs)
+
+        budget = last_params.get("budget", 30)
+        budget_min = last_params.get("budget_min")
+        budget_max = last_params.get("budget_max")
+        budget_type = last_params.get("budget_type", "exact")
+        cuisine = last_params.get("cuisine")
+        spicy = last_params.get("spicy", "微辣")
+        avoid = last_params.get("avoid", []).copy()
+
+        print(
+            f"[尝试新的] 使用参数: 预算={budget} ({budget_type}: {budget_min}-{budget_max}), 菜系={cuisine}, 辣度={spicy}, 忌口={avoid}")
+
+        self.conversation_context['try_new_mode'] = True
+
+        exclude_ids = self.conversation_context.get("recommended_ids", [])
+
+        recommendations = self._get_recommendations_from_mock_exclude_hotpot(
+            budget, None, cuisine, spicy, avoid, exclude_ids,
+            budget_min, budget_max, budget_type
+        )
+
+        if not recommendations:
+            print("[尝试新的] 没有找到新菜品")
+            self.conversation_context['try_new_mode'] = False
+
+            cuisine_text = cuisine if cuisine else "不限"
+            return {
+                "success": True,
+                "content": f"抱歉，在{budget}元预算内没有找到更多{cuisine_text}新菜品了。\n\n当前条件：{cuisine_text}菜系，{spicy}口味\n\n您可以尝试提高预算或修改口味偏好。",
+                "model": "qwen-0.5b (0.5B)" if self.mode == 'local' else "Deepseek",
+                "workflow": None
+            }
+
+        # 更新搜索参数
+        self.conversation_context["last_search_params"] = {
+            "budget": budget,
+            "budget_min": budget_min,
+            "budget_max": budget_max,
+            "budget_type": budget_type,
+            "keyword": None,
+            "cuisine": cuisine,
+            "spicy": spicy,
+            "avoid": avoid.copy(),
+            "exclude_restaurant": None,
+        }
+
+        for rec in recommendations:
+            if rec["dish"]["id"] not in self.conversation_context["recommended_ids"]:
+                self.conversation_context["recommended_ids"].append(rec["dish"]["id"])
+
+        self.conversation_context["last_budget"] = budget
+        self.conversation_context["last_cuisine"] = cuisine
+        self.conversation_context["last_spicy"] = spicy
+        self.conversation_context["last_avoid"] = avoid
+        self.conversation_context["current_recommendations"] = recommendations
+        self.conversation_context['try_new_mode'] = False
+
+        content = self._format_recommendation_response(recommendations, budget, spicy, user_input, user_prefs)
+
+        return {
+            "success": True,
+            "content": content,
+            "model": "qwen-0.5b (0.5B)" if self.mode == 'local' else "Deepseek",
+            "workflow": None,
+            "recommendations": recommendations
+        }
 
     def _handle_hotpot_recommend(self, budget: float, spicy: str, avoid: list, user_input: str,
-                                 user_prefs: dict) -> dict:
+                                 user_prefs: dict,
+                                 budget_min: float = None, budget_max: float = None,
+                                 budget_type: str = "exact") -> dict:
         """处理火锅推荐"""
-        hotpot_rec = self._get_hotpot_recommendations(budget, spicy, avoid)
+        hotpot_rec = self._get_hotpot_recommendations(budget, spicy, avoid, budget_min, budget_max, budget_type)
 
         if not hotpot_rec:
-            # 检查是否因为预算不足
             return {
                 "success": True,
                 "content": f"抱歉，在{budget}元预算内没有找到合适的火锅组合。\n\n火锅需要锅底+配菜，建议预算至少30-40元。\n\n您也可以尝试其他菜系，或说'提高预算'。",
@@ -1087,9 +1567,9 @@ class QwenRouterService:
         self.conversation_context["last_avoid"] = avoid
         self.conversation_context["last_search_params"] = {
             "budget": budget,
-            "budget_min": None,
-            "budget_max": None,
-            "budget_type": "exact",
+            "budget_min": budget_min,
+            "budget_max": budget_max,
+            "budget_type": budget_type,
             "keyword": None,
             "cuisine": "火锅",
             "spicy": spicy,
@@ -1105,12 +1585,13 @@ class QwenRouterService:
         }
 
     def _handle_chuanchuan_recommend(self, budget: float, spicy: str, avoid: list, user_input: str,
-                                     user_prefs: dict) -> dict:
+                                     user_prefs: dict,
+                                     budget_min: float = None, budget_max: float = None,
+                                     budget_type: str = "exact") -> dict:
         """处理串串推荐"""
-        chuanchuan_rec = self._get_chuanchuan_recommendations(budget, spicy, avoid)
+        chuanchuan_rec = self._get_chuanchuan_recommendations(budget, spicy, avoid, budget_min, budget_max, budget_type)
 
         if not chuanchuan_rec:
-            # 检查是否因为预算不足
             return {
                 "success": True,
                 "content": f"抱歉，在{budget}元预算内没有找到合适的串串组合。\n\n串串需要锅底+串串，建议预算至少30-40元。\n\n您也可以尝试其他菜系，或说'提高预算'。",
@@ -1132,9 +1613,9 @@ class QwenRouterService:
         self.conversation_context["last_avoid"] = avoid
         self.conversation_context["last_search_params"] = {
             "budget": budget,
-            "budget_min": None,
-            "budget_max": None,
-            "budget_type": "exact",
+            "budget_min": budget_min,
+            "budget_max": budget_max,
+            "budget_type": budget_type,
             "keyword": None,
             "cuisine": "串串",
             "spicy": spicy,
@@ -1153,7 +1634,6 @@ class QwenRouterService:
         """处理修改推荐请求"""
         user_lower = user_input.lower()
 
-        # 优先使用上次搜索参数中的预算，而不是 last_budget
         last_params = self.conversation_context.get("last_search_params")
         if last_params:
             budget = last_params.get("budget", 30)
@@ -1163,9 +1643,8 @@ class QwenRouterService:
             cuisine = last_params.get("cuisine")
             spicy = last_params.get("spicy", "微辣")
             avoid = last_params.get("avoid", []).copy()
-            print(f"[修改推荐] 从last_search_params读取: 预算={budget}, 菜系={cuisine}, 辣度={spicy}, 忌口={avoid}")
+            print(f"[修改推荐] 从last_search_params读取: 预算={budget} ({budget_type}), 菜系={cuisine}, 辣度={spicy}, 忌口={avoid}")
         else:
-            # 降级使用 last_budget
             budget = self.conversation_context.get("last_budget", 30)
             budget_min = None
             budget_max = None
@@ -1178,7 +1657,6 @@ class QwenRouterService:
         change_desc = []
         new_excluded_dishes = []
 
-        # 检查是否是火锅/串串的换一批请求
         if re.search(r'换一批|重新推荐|再来一批', user_lower):
             if cuisine == "火锅":
                 return self._handle_hotpot_change(user_prefs)
@@ -1187,7 +1665,6 @@ class QwenRouterService:
             else:
                 return self._handle_re_recommend(user_prefs)
 
-        # 预算调整
         if re.search(r'提高预算|更贵|贵一点', user_lower):
             budget = min(100, budget + 10)
             budget_min = int(budget * 0.9)
@@ -1201,7 +1678,6 @@ class QwenRouterService:
             budget_type = "exact"
             change_desc.append(f"预算降低为{budget}元")
 
-        # 直接预算修改
         budget_match = re.search(r'(\d+)', user_input)
         if budget_match and not re.search(r'不要', user_lower):
             budget = int(budget_match.group(1))
@@ -1210,23 +1686,24 @@ class QwenRouterService:
             budget_type = "exact"
             change_desc.append(f"预算改为{budget}元")
 
-        # 菜系修改
         cuisines = ["川菜", "粤菜", "湘菜", "东北菜", "日料", "韩餐", "西餐", "火锅", "小吃", "轻食",
-                    "西北菜", "东南亚", "港式", "清真", "新疆菜", "台湾菜", "京菜", "素食", "海鲜", "鲁菜", "甜品"]
+                    "西北菜", "东南亚", "港式", "清真", "新疆菜", "台湾菜", "京菜", "素食", "海鲜", "鲁菜", "甜品",
+                    "烧烤", "串串", "饮品"]
         for c in cuisines:
             if c in user_input:
                 cuisine = c
                 change_desc.append(f"菜系改为{cuisine}")
+                if cuisine in ["甜品", "饮品"]:
+                    spicy = "不辣"
+                    change_desc.append(f"辣度改为不辣")
                 break
 
-        # 辣度修改
         for s in ["特辣", "中辣", "微辣", "不辣"]:
             if s in user_input:
                 spicy = s
                 change_desc.append(f"辣度改为{spicy}")
                 break
 
-        # 忌口添加（食材类忌口）
         exclude_match = re.search(r'不要([\u4e00-\u9fa5]{2,6})', user_input)
         if exclude_match:
             exclude_item = exclude_match.group(1)
@@ -1234,7 +1711,6 @@ class QwenRouterService:
                 avoid.append(exclude_item)
                 change_desc.append(f"排除{exclude_item}")
 
-        # 排除具体菜品
         all_dish_names = self._get_all_dish_names()
         for dish in all_dish_names:
             if f"不要{dish}" in user_input or f"不要吃{dish}" in user_input:
@@ -1252,10 +1728,8 @@ class QwenRouterService:
             }
 
         print(f"[修改推荐] 修改项: {change_desc}")
-        print(f"[修改推荐] 当前搜索参数 - 预算: {budget}, 菜系: {cuisine}, 辣度: {spicy}, 忌口: {avoid}")
-        print(f"[修改推荐] 预算范围 - min: {budget_min}, max: {budget_max}, type: {budget_type}")
+        print(f"[修改推荐] 当前搜索参数 - 预算: {budget} ({budget_type}: {budget_min}-{budget_max}), 菜系: {cuisine}, 辣度: {spicy}, 忌口: {avoid}")
 
-        # 将排除的菜品加入 recommended_ids
         for dish_name in new_excluded_dishes:
             all_items = self._get_all_dishes_with_restaurant()
             for item in all_items:
@@ -1265,11 +1739,9 @@ class QwenRouterService:
                         print(f"[排除菜品] 将 {dish_name} 加入排除列表")
                     break
 
-        # 重新搜索（排除已推荐的菜品）
         exclude_ids = self.conversation_context.get("recommended_ids", [])
         print(f"[修改推荐] 排除菜品ID列表: {exclude_ids}")
 
-        # 使用排除火锅串串的推荐方法
         recommendations = self._get_recommendations_from_mock_exclude_hotpot(
             budget, None, cuisine, spicy, avoid, exclude_ids,
             budget_min, budget_max, budget_type
@@ -1280,7 +1752,6 @@ class QwenRouterService:
             for rec in recommendations[:3]:
                 print(f"  - {rec['dish']['name']} ({rec['restaurant']['name']}) - {rec['dish']['price']}元")
 
-        # 更新上下文
         self.conversation_context["last_budget"] = budget
         self.conversation_context["last_cuisine"] = cuisine
         self.conversation_context["last_spicy"] = spicy
@@ -1298,7 +1769,6 @@ class QwenRouterService:
             "exclude_restaurant": None,
         }
 
-        # 记录新推荐的ID
         for rec in recommendations:
             if rec["dish"]["id"] not in self.conversation_context["recommended_ids"]:
                 self.conversation_context["recommended_ids"].append(rec["dish"]["id"])
@@ -1338,13 +1808,15 @@ class QwenRouterService:
             return self._handle_recommend("推荐火锅", user_prefs)
 
         budget = params["budget"]
+        budget_min = params.get("budget_min")
+        budget_max = params.get("budget_max")
+        budget_type = params.get("budget_type", "exact")
         spicy = params["spicy"]
         avoid = params["avoid"]
 
-        # 重置锅底推荐记录，换一家餐厅
         self.conversation_context["recommended_broth_ids"] = []
 
-        hotpot_rec = self._get_hotpot_recommendations(budget, spicy, avoid)
+        hotpot_rec = self._get_hotpot_recommendations(budget, spicy, avoid, budget_min, budget_max, budget_type)
 
         if not hotpot_rec:
             return {
@@ -1378,12 +1850,15 @@ class QwenRouterService:
             return self._handle_recommend("推荐串串", user_prefs)
 
         budget = params["budget"]
+        budget_min = params.get("budget_min")
+        budget_max = params.get("budget_max")
+        budget_type = params.get("budget_type", "exact")
         spicy = params["spicy"]
         avoid = params["avoid"]
 
         self.conversation_context["recommended_broth_ids"] = []
 
-        chuanchuan_rec = self._get_chuanchuan_recommendations(budget, spicy, avoid)
+        chuanchuan_rec = self._get_chuanchuan_recommendations(budget, spicy, avoid, budget_min, budget_max, budget_type)
 
         if not chuanchuan_rec:
             return {
@@ -1421,7 +1896,6 @@ class QwenRouterService:
         budget_max = params.get("budget_max")
         budget_type = params.get("budget_type", "exact")
 
-        # 如果没有保存 budget_min/max，则根据 budget 计算
         if budget_min is None or budget_max is None:
             if budget_type == "around":
                 budget_min = budget - 5
@@ -1441,10 +1915,9 @@ class QwenRouterService:
 
         exclude_ids = self.conversation_context.get("recommended_ids", [])
 
-        print(f"[换一批] 使用相同条件: 预算={budget}元 (范围: {budget_min}-{budget_max}), 菜系={cuisine}, 辣度={spicy}")
+        print(f"[换一批] 使用相同条件: 预算={budget} ({budget_type}: {budget_min}-{budget_max}), 菜系={cuisine}, 辣度={spicy}")
         print(f"[换一批] 已推荐 {len(exclude_ids)} 个菜品")
 
-        # 使用排除火锅串串的推荐方法
         recommendations = self._get_recommendations_from_mock_exclude_hotpot(
             budget, keyword, cuisine, spicy, avoid, exclude_ids,
             budget_min, budget_max, budget_type
@@ -1592,7 +2065,12 @@ class QwenRouterService:
         if user_input.isdigit():
             return self.select_dish(int(user_input))
 
-        # ========== 2. 工作流触发词（排除推荐相关的） ==========
+        # ========== 2. 尝试新的快速检测 ==========
+        if re.search(r'想尝试新的|尝试新|换换口味|新口味', user_lower):
+            print(f"[快速检测] 检测到尝试新的 -> recommend_new")
+            return self._handle_recommend_new(user_input, user_prefs)
+
+        # ========== 3. 工作流触发词 ==========
         for pattern, workflow in self.workflow_triggers.items():
             if re.search(pattern, user_lower):
                 print(f"[工作流] 触发: {workflow}")
@@ -1617,7 +2095,7 @@ class QwenRouterService:
                         "model": "workflow"
                     }
 
-        # ========== 3. AI 意图识别 ==========
+        # ========== 4. AI 意图识别 ==========
         context_info = {
             "cuisine": self.conversation_context.get("last_cuisine"),
             "spicy": self.conversation_context.get("last_spicy"),
@@ -1629,13 +2107,14 @@ class QwenRouterService:
 
         if ai_intent:
             action = ai_intent.get("action", "recommend")
-            # 标准化 action：转小写，去除空格，将 re recommend 转换为 re_recommend
             action = action.lower().strip().replace(" ", "_")
-            if action == "re_recommend" or action == "rerecommend" or action == "re_recommend":
+            if action in ["re_recommend", "rerecommend"]:
                 action = "re_recommend"
             print(f"[AI决策] action={action}")
 
-            if action == "re_recommend":
+            if action == "recommend_new":
+                return self._handle_recommend_new(user_input, user_prefs)
+            elif action == "re_recommend":
                 return self._handle_re_recommend(user_prefs)
             elif action == "modify":
                 return self._handle_modify(user_input, user_prefs)
@@ -1670,8 +2149,9 @@ class QwenRouterService:
             elif action == "recommend":
                 return self._handle_recommend(user_input, user_prefs)
 
-            # 如果 action 不匹配任何已知类型，默认走推荐
             return self._handle_recommend(user_input, user_prefs)
+
+        return self._handle_recommend(user_input, user_prefs)
 
 
 # 单例

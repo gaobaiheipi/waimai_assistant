@@ -62,12 +62,10 @@ class TrackingScreen(MDScreen):
         self.order_id = str(order_id)
         self._load_tracking_info()
 
-        # 启动定时刷新（每10秒）
         if self.update_clock:
             self.update_clock.cancel()
         self.update_clock = Clock.schedule_interval(self._refresh_tracking, 10)
 
-        # 启动模拟配送流程（仅注册用户或游客有订单时）
         if self.status_text not in ["已送达", "已完成"]:
             self._start_delivery_simulation()
 
@@ -79,12 +77,28 @@ class TrackingScreen(MDScreen):
 
             from services.local_auth import user_session
 
-            # 游客从内存获取，注册用户从数据库获取
+            order = None
+
             if user_session.is_guest:
                 order = user_session.get_order_by_id(self.order_id)
             else:
-                order_id_int = int(self.order_id)
-                order = user_session.get_order_tracking(order_id_int)
+                # 尝试将 order_id 转换为数据库ID
+                try:
+                    # 如果 order_id 是 "1_1" 格式，需要找到对应的数据库ID
+                    if '_' in str(self.order_id):
+                        for o in user_session.get_orders():
+                            if o.get('display_order_id') == self.order_id:
+                                order = o
+                                break
+                    else:
+                        # 直接作为数据库ID查询
+                        order = user_session.get_order_tracking(int(self.order_id))
+                except (ValueError, TypeError):
+                    # 作为显示订单号查找
+                    for o in user_session.get_orders():
+                        if o.get('display_order_id') == self.order_id:
+                            order = o
+                            break
 
             if order:
                 self.order = order
@@ -92,7 +106,6 @@ class TrackingScreen(MDScreen):
                 self.status_text = status
                 self.progress_value = self.status_to_value.get(status, 0) / 100
 
-                # 骑手信息
                 rider_name = order.get('rider_name') or ""
                 phone = order.get('rider_phone') or ""
                 self.rider_phone = str(phone) if phone else ""
@@ -323,12 +336,37 @@ class TrackingScreen(MDScreen):
     def call_rider(self):
         """联系骑手 - 显示骑手电话"""
         from utils.fonts import chinese_font
+        from kivymd.uix.dialog import MDDialog
+        from kivymd.uix.button import MDFlatButton, MDRaisedButton
         from kivy.clock import Clock
 
         if self.rider_phone:
+            # 创建内容容器
+            from kivymd.uix.boxlayout import MDBoxLayout
+            from kivymd.uix.label import MDLabel
+
+            content = MDBoxLayout(
+                orientation="vertical",
+                spacing=10,
+                padding=20,
+                adaptive_height=True
+            )
+
+            info_label = MDLabel(
+                text=f"骑手电话：{self.rider_phone}",
+                halign="center",
+                size_hint_y=None,
+                height=50
+            )
+            if chinese_font:
+                info_label.font_name = chinese_font
+
+            content.add_widget(info_label)
+
             dialog = MDDialog(
                 title="联系骑手",
-                text=f"骑手电话：{self.rider_phone}",
+                type="custom",
+                content_cls=content,
                 buttons=[
                     MDFlatButton(
                         text="关闭",
@@ -338,24 +376,26 @@ class TrackingScreen(MDScreen):
                         text="呼叫",
                         on_release=lambda x: [
                             dialog.dismiss(),
-                            print(f"[模拟] 正在呼叫 {self.rider_phone}...")
+                            self.show_snackbar(f"正在呼叫 {self.rider_phone}...")
                         ]
                     )
                 ]
             )
 
-            # 延迟设置字体
-            def fix_dialog_font(dt):
-                if hasattr(dialog, 'title_label'):
-                    dialog.title_label.font_name = chinese_font
-                for btn in dialog.buttons:
-                    if hasattr(btn, 'font_name'):
-                        btn.font_name = chinese_font
-                if hasattr(dialog, 'content_cls') and dialog.content_cls:
-                    if hasattr(dialog.content_cls, 'font_name'):
-                        dialog.content_cls.font_name = chinese_font
+            # 设置标题字体
+            if hasattr(dialog, 'title_label'):
+                dialog.title_label.font_name = chinese_font
+            for btn in dialog.buttons:
+                if hasattr(btn, 'font_name'):
+                    btn.font_name = chinese_font
 
-            Clock.schedule_once(fix_dialog_font, 0.1)
             dialog.open()
         else:
-            print("[模拟] 暂无可联系的骑手，请稍后再试")
+            self.show_snackbar("暂无可联系的骑手")
+
+    def show_snackbar(self, text):
+        """显示提示"""
+        from kivymd.uix.snackbar import MDSnackbar
+        from kivymd.uix.label import MDLabel
+        snackbar = MDSnackbar(MDLabel(text=text))
+        snackbar.open()
