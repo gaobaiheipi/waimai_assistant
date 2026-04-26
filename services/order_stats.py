@@ -174,26 +174,35 @@ class OrderStatsService:
 
     def get_order_summary_popup(self, user_id: int = None) -> dict:
         """获取订单总结弹窗信息"""
+        from services.local_auth import user_session
+
         if user_session.is_guest:
             return {'should_show': False}
 
         orders = self.get_non_dessert_drink_orders(user_id)
         total_orders = len(orders)
 
+        print(f"[订单总结] 总订单数: {total_orders}")
+
         if total_orders < 20:
             return {'should_show': False}
 
         prefs = user_session.get_prefs()
-        last_summary_count = prefs.get('last_summary_order_count', 0)
+        last_summary_count = prefs.get('last_summary_count', 0)
+        print(f"[订单总结] 上次总结时订单数(last_summary_count): {last_summary_count}")
 
-        next_milestone = ((last_summary_count // 20) + 1) * 20
-        should_show = total_orders >= next_milestone
+        current_milestone = (total_orders // 20) * 20
+        print(f"[订单总结] 当前里程碑: {current_milestone}")
+
+        should_show = current_milestone > last_summary_count
+
+        print(f"[订单总结] 是否弹窗: {should_show}")
 
         if not should_show:
             return {'should_show': False}
 
-        # 分析最近20个订单的预算和辣度
-        recent_orders = orders[-20:] if len(orders) >= 20 else orders
+        start_idx = total_orders - 20
+        recent_orders = orders[start_idx:] if start_idx >= 0 else orders
         budget_sum = 0
         spicy_counter = Counter()
 

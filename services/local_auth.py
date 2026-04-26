@@ -47,16 +47,17 @@ class UserSession(EventDispatcher):
             }
         return {}
 
-    def login(self, username: str, password: str) -> tuple:
-        success, result = self.db.login_user(username, password)
+    def login(self, phone: str, password: str) -> tuple:
+        """登录 - phone 是手机号"""
+        success, result = self.db.login_user(phone, password)
         if success:
             self.user_id = str(result['id'])
-            self.nickname = result['username']
-            self.phone = result['phone']
+            self.nickname = result.get('username', phone)
+            self.phone = result.get('phone', '')
             self.is_guest = False
             self._prefs = self.db.get_preferences(result['id'])
             self.preferences = self._prefs.copy()
-            return True, "登录成功"
+            return True, {"id": self.user_id, "nickname": self.nickname, "phone": self.phone}
         return False, result
 
     def login_guest(self) -> dict:
@@ -69,8 +70,9 @@ class UserSession(EventDispatcher):
             "preferences": self.get_prefs()
         }
 
-    def register(self, username: str, password: str, phone: str) -> tuple:
-        success, result = self.db.register_user(username, password, phone)
+    def register(self, nickname: str, password: str, phone: str) -> tuple:
+        """注册 - nickname 是昵称，phone 是手机号"""
+        success, result = self.db.register_user(nickname, password, phone)
         if success:
             return True, result
         return False, result
@@ -79,6 +81,7 @@ class UserSession(EventDispatcher):
         self.reset()
 
     def get_prefs(self) -> dict:
+        """获取偏好"""
         if self.is_guest:
             if hasattr(self, '_guest_prefs') and self._guest_prefs:
                 return self._guest_prefs
@@ -89,25 +92,42 @@ class UserSession(EventDispatcher):
                 'avoid_foods': [],
                 'default_budget': 30,
                 'spicy_level': '微辣',
+                'last_summary_order_count': 0,
             }
             return default_prefs
         if not self._prefs and self.user_id:
             self._prefs = self.db.get_preferences(int(self.user_id))
+            if 'last_summary_order_count' not in self._prefs:
+                self._prefs['last_summary_order_count'] = 0
             self.preferences = self._prefs.copy()
         return self._prefs
 
     def update_prefs(self, prefs: dict) -> bool:
+        """更新偏好"""
+        print(f"[update_prefs] 更新前 _prefs: {self._prefs}")
+        print(f"[update_prefs] 要更新的内容: {prefs}")
+
         self._prefs.update(prefs)
         self.preferences = self._prefs.copy()
+
+        print(f"[update_prefs] 更新后 _prefs: {self._prefs}")
 
         if self.is_guest:
             if not hasattr(self, '_guest_prefs'):
                 self._guest_prefs = {}
             self._guest_prefs.update(prefs)
+            print(f"[游客] 偏好已保存到内存: {self._guest_prefs}")
             return True
 
         if self.user_id:
-            return self.db.update_preferences(int(self.user_id), self._prefs)
+            result = self.db.update_preferences(int(self.user_id), self._prefs)
+            print(f"[update_prefs] 数据库保存结果: {result}")
+
+            # 验证是否保存成功
+            verify_prefs = self.db.get_preferences(int(self.user_id))
+            print(f"[update_prefs] 验证读取: last_summary_count={verify_prefs.get('last_summary_count', 0)}")
+
+            return result
         return True
 
     def clear_guest_prefs(self):

@@ -11,6 +11,8 @@ from kivy.utils import platform
 # 导入 mock 数据集
 import sys
 
+from services.db_service import get_db_service
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data.mock_restaurants import get_recommendations, get_restaurant, RESTAURANTS, DISHES_BY_RESTAURANT
 from services.local_auth import user_session
@@ -492,9 +494,31 @@ class QwenRouterService:
                                           spicy: str = None, avoid: list = None,
                                           exclude_ids: list = None) -> list:
         """根据偏好和价格范围过滤推荐列表"""
+        from services.db_service import get_db_service
+        from services.local_auth import user_session
+
         filtered = []
         exclude_ids = exclude_ids or []
         avoid = avoid or []
+
+        # 获取用户ID（用于收藏和避雷）
+        user_id = None
+        if not user_session.is_guest:
+            try:
+                user_id = int(user_session.user_id)
+            except:
+                pass
+
+        # 获取收藏和避雷列表
+        favorite_dishes = set()
+        blacklist_dishes = set()
+
+        if user_id:
+            db = get_db_service()
+            for fav in db.get_favorites(user_id):
+                favorite_dishes.add((fav['restaurant_name'], fav['dish_name']))
+            for bl in db.get_blacklist(user_id):
+                blacklist_dishes.add((bl['restaurant_name'], bl['dish_name']))
 
         # 获取常点信息
         try_new_mode = self.conversation_context.get('try_new_mode', False)
@@ -524,45 +548,61 @@ class QwenRouterService:
             dish = rec["dish"]
             restaurant = rec["restaurant"]
             dish_name = dish["name"]
+            restaurant_name = restaurant["name"]
             price = dish["price"]
 
+            # 预算过滤
             if price < price_min or price > price_max:
                 continue
+            # 菜系过滤
             if cuisine and cuisine not in restaurant["cuisine"]:
                 continue
+            # 关键词过滤
             if keyword and keyword not in dish_name:
                 continue
+            # 辣度过滤
             if spicy:
                 dish_spicy = dish.get("spicy", "微辣")
                 if not match_spicy(dish_spicy, spicy):
                     continue
+            # 忌口过滤
             if avoid:
                 if self._contains_avoid_ingredient(dish_name, avoid):
                     continue
+            # 已推荐排除
             if dish["id"] in exclude_ids:
                 continue
 
+            # ========== 避雷过滤：不推荐任何避雷菜品 ==========
+            if (restaurant_name, dish_name) in blacklist_dishes:
+                print(f"[避雷过滤] 跳过避雷菜品: {restaurant_name} - {dish_name}")
+                continue
+
+            # 标记是否为收藏
+            is_favorite = (restaurant_name, dish_name) in favorite_dishes
+
             # 标记是否为常点
             is_frequent = False
-            if dish_name in frequent_dish_names:
-                is_frequent = True
-            elif restaurant["name"] in frequent_restaurant_names:
-                is_frequent = True
+            if not is_favorite:  # 收藏优先级更高
+                if dish_name in frequent_dish_names:
+                    is_frequent = True
+                elif restaurant_name in frequent_restaurant_names:
+                    is_frequent = True
 
+            rec['is_favorite'] = is_favorite
             rec['is_frequent'] = is_frequent
             filtered.append(rec)
 
-        # 排序
+        # 排序：收藏优先 > 常点优先 > 评分 > 价格
         if try_new_mode:
-            # 尝试新模式：常点排后
             filtered.sort(key=lambda x: (
-                x.get('is_frequent', False),
+                -x.get('is_favorite', False),
                 -x["restaurant"]["rating"],
                 x["dish"]["price"]
             ))
         else:
-            # 正常模式：常点优先
             filtered.sort(key=lambda x: (
+                -x.get('is_favorite', False),
                 -x.get('is_frequent', False),
                 -x["restaurant"]["rating"],
                 x["dish"]["price"]
@@ -989,9 +1029,16 @@ class QwenRouterService:
             restaurant = rec["restaurant"]
             price = f"{dish['price']:.2f}"
 
-            frequent_tag = "（你的常点）" if rec.get('is_frequent', False) else ""
+            # 添加标注
+            tags = []
+            if rec.get('is_favorite', False):
+                tags.append("收藏")
+            if rec.get('is_frequent', False):
+                tags.append("你的常点")
 
-            content += f"{i}. {dish['name']}{frequent_tag} - {restaurant['name']}\n"
+            tag_text = " " + " ".join(tags) if tags else ""
+
+            content += f"{i}. {dish['name']}{tag_text} - {restaurant['name']}\n"
             content += f"   评分{restaurant['rating']}分 | {price}元 | {restaurant['delivery_time']}分钟\n"
             content += f"   {dish.get('description', '人气推荐')}\n\n"
 
@@ -999,6 +1046,8 @@ class QwenRouterService:
         content += "健康提示：祝您用餐愉快，注意饮食均衡。\n"
         content += "-" * 30 + "\n\n"
         content += "回复数字选择菜品，或说'换一批'重新推荐，说'下单'确认订单。"
+
+        return content
 
         return content
 

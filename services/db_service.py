@@ -43,16 +43,23 @@ class DatabaseService:
 
         # preferences 表
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS preferences (
-                user_id INTEGER PRIMARY KEY,
-                spiciness_level VARCHAR(20) NOT NULL DEFAULT '微辣',
-                budget_range VARCHAR(20) DEFAULT '30',
-                default_address VARCHAR(200),
-                avoid_foods TEXT,
-                updated_at VARCHAR(20) NOT NULL,
-                FOREIGN KEY (user_id) REFERENCES users(id)
-            )
-        ''')
+                CREATE TABLE IF NOT EXISTS preferences (
+                    user_id INTEGER PRIMARY KEY,
+                    spiciness_level VARCHAR(20) NOT NULL DEFAULT '微辣',
+                    budget_range VARCHAR(20) DEFAULT '30',
+                    default_address VARCHAR(200),
+                    avoid_foods TEXT,
+                    last_summary_count INTEGER DEFAULT 0,
+                    updated_at VARCHAR(20) NOT NULL,
+                    FOREIGN KEY (user_id) REFERENCES users(id)
+                )
+            ''')
+
+        cursor.execute("PRAGMA table_info(preferences)")
+        existing_columns = [col[1] for col in cursor.fetchall()]
+        if 'last_summary_count' not in existing_columns:
+            cursor.execute('ALTER TABLE preferences ADD COLUMN last_summary_count INTEGER DEFAULT 0')
+            print("[数据库] 已为 preferences 表添加 last_summary_count 字段")
 
         # orders 表 - 添加 order_seq 字段
         cursor.execute('''
@@ -75,6 +82,34 @@ class DatabaseService:
                 UNIQUE(user_id, order_seq)
             )
         ''')
+
+        # 收藏表
+        cursor.execute('''
+               CREATE TABLE IF NOT EXISTS favorites (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   user_id INTEGER NOT NULL,
+                   restaurant_name VARCHAR(100) NOT NULL,
+                   dish_name VARCHAR(100) NOT NULL,
+                   dish_price DECIMAL(10,2),
+                   created_at VARCHAR(20) NOT NULL,
+                   FOREIGN KEY (user_id) REFERENCES users(id),
+                   UNIQUE(user_id, restaurant_name, dish_name)
+               )
+           ''')
+
+        # 避雷表
+        cursor.execute('''
+               CREATE TABLE IF NOT EXISTS blacklist (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   user_id INTEGER NOT NULL,
+                   restaurant_name VARCHAR(100) NOT NULL,
+                   dish_name VARCHAR(100) NOT NULL,
+                   reason VARCHAR(200),
+                   created_at VARCHAR(20) NOT NULL,
+                   FOREIGN KEY (user_id) REFERENCES users(id),
+                   UNIQUE(user_id, restaurant_name, dish_name)
+               )
+           ''')
 
         # 为已存在的表添加缺失的列
         self._add_missing_columns(cursor)
@@ -120,18 +155,23 @@ class DatabaseService:
     # ========== 用户相关 ==========
 
     def register_user(self, username: str, password: str, phone: str) -> tuple:
-        """注册用户"""
+        """注册用户
+        username: 昵称
+        phone: 手机号
+        """
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
 
-            cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
+            # 检查手机号是否已存在（手机号应该是唯一的）
+            cursor.execute("SELECT id FROM users WHERE phone = ?", (phone,))
             if cursor.fetchone():
-                return False, "用户名已存在"
+                return False, "该手机号已注册"
 
             password_hash = hashlib.sha256(password.encode()).hexdigest()
             created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+            # username 存昵称，phone 存手机号
             cursor.execute('''
                 INSERT INTO users (username, password_hash, phone, created_at)
                 VALUES (?, ?, ?, ?)
@@ -139,10 +179,11 @@ class DatabaseService:
 
             user_id = cursor.lastrowid
 
+            # 初始化偏好
             cursor.execute('''
-                INSERT INTO preferences (user_id, spiciness_level, budget_range, avoid_foods, updated_at)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (user_id, '微辣', '30', '[]', created_at))
+                INSERT INTO preferences (user_id, spiciness_level, budget_range, avoid_foods, last_summary_count, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (user_id, '微辣', '30', '[]', 0, created_at))
 
             conn.commit()
             conn.close()
@@ -151,18 +192,21 @@ class DatabaseService:
         except Exception as e:
             return False, str(e)
 
-    def login_user(self, username: str, password: str) -> tuple:
-        """用户登录"""
+    def login_user(self, phone: str, password: str) -> tuple:
+        """用户登录
+        phone: 手机号
+        """
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
 
             password_hash = hashlib.sha256(password.encode()).hexdigest()
 
+            # 用手机号查询
             cursor.execute('''
                 SELECT id, username, phone FROM users 
-                WHERE username = ? AND password_hash = ?
-            ''', (username, password_hash))
+                WHERE phone = ? AND password_hash = ?
+            ''', (phone, password_hash))
 
             user = cursor.fetchone()
             conn.close()
@@ -170,7 +214,7 @@ class DatabaseService:
             if user:
                 return True, dict(user)
             else:
-                return False, "用户名或密码错误"
+                return False, "手机号或密码错误"
 
         except Exception as e:
             return False, str(e)
@@ -226,6 +270,7 @@ class DatabaseService:
 
         if prefs:
             prefs_dict = dict(prefs)
+            # 解析 avoid_foods
             try:
                 avoid_foods = prefs_dict.get('avoid_foods', '[]')
                 if isinstance(avoid_foods, str):
@@ -238,8 +283,14 @@ class DatabaseService:
             prefs_dict['spicy_level'] = prefs_dict.get('spiciness_level', '微辣')
             prefs_dict['default_budget'] = int(prefs_dict.get('budget_range', '30'))
 
+            # 确保 last_summary_count 存在
+            if 'last_summary_count' not in prefs_dict:
+                prefs_dict['last_summary_count'] = 0
+
+            print(f"[数据库] 读取偏好: user_id={user_id}, last_summary_count={prefs_dict.get('last_summary_count', 0)}")
             return prefs_dict
         else:
+            print(f"[数据库] 用户 {user_id} 没有偏好记录，返回默认")
             return {
                 'user_id': user_id,
                 'spiciness_level': '微辣',
@@ -247,7 +298,8 @@ class DatabaseService:
                 'budget_range': '30',
                 'default_budget': 30,
                 'default_address': '',
-                'avoid_foods': []
+                'avoid_foods': [],
+                'last_summary_count': 0
             }
 
     def update_preferences(self, user_id: int, prefs: Dict) -> bool:
@@ -267,19 +319,41 @@ class DatabaseService:
             spiciness = prefs.get('spicy_level', prefs.get('spiciness_level', '微辣'))
             budget = prefs.get('default_budget', prefs.get('budget_range', '30'))
             address = prefs.get('default_address', '')
+            last_summary_count = prefs.get('last_summary_count', 0)
 
-            cursor.execute('''
-                INSERT OR REPLACE INTO preferences 
-                (user_id, spiciness_level, budget_range, default_address, avoid_foods, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (user_id, spiciness, str(budget), address, avoid_foods_json, updated_at))
+            print(f"[数据库] 保存偏好: user_id={user_id}, last_summary_count={last_summary_count}")
+
+            cursor.execute("SELECT 1 FROM preferences WHERE user_id = ?", (user_id,))
+            exists = cursor.fetchone()
+
+            if exists:
+                cursor.execute('''
+                    UPDATE preferences 
+                    SET spiciness_level=?, budget_range=?, default_address=?, 
+                        avoid_foods=?, last_summary_count=?, updated_at=?
+                    WHERE user_id=?
+                ''', (spiciness, str(budget), address, avoid_foods_json, last_summary_count, updated_at, user_id))
+            else:
+                cursor.execute('''
+                    INSERT INTO preferences 
+                    (user_id, spiciness_level, budget_range, default_address, avoid_foods, last_summary_count, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (user_id, spiciness, str(budget), address, avoid_foods_json, last_summary_count, updated_at))
 
             conn.commit()
+
+            cursor.execute("SELECT last_summary_count FROM preferences WHERE user_id = ?", (user_id,))
+            row = cursor.fetchone()
+            if row:
+                print(f"[数据库] 保存后验证: last_summary_count={row[0]}")
+
             conn.close()
             return True
 
         except Exception as e:
             print(f"更新偏好失败: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
     # ========== 订单相关 ==========
@@ -415,6 +489,162 @@ class DatabaseService:
 
         except Exception as e:
             print(f"更新订单状态失败: {e}")
+            return False
+
+    # ========== 收藏相关 ==========
+
+    def add_favorite(self, user_id: int, restaurant_name: str, dish_name: str, dish_price: float = None) -> bool:
+        """添加收藏"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            cursor.execute('''
+                INSERT OR IGNORE INTO favorites (user_id, restaurant_name, dish_name, dish_price, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (user_id, restaurant_name, dish_name, dish_price, created_at))
+
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"添加收藏失败: {e}")
+            return False
+
+    def remove_favorite(self, user_id: int, restaurant_name: str, dish_name: str) -> bool:
+        """移除收藏"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                DELETE FROM favorites 
+                WHERE user_id = ? AND restaurant_name = ? AND dish_name = ?
+            ''', (user_id, restaurant_name, dish_name))
+
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"移除收藏失败: {e}")
+            return False
+
+    def get_favorites(self, user_id: int) -> List[Dict]:
+        """获取用户收藏列表"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                SELECT id, restaurant_name, dish_name, dish_price, created_at
+                FROM favorites 
+                WHERE user_id = ?
+                ORDER BY created_at DESC
+            ''', (user_id,))
+
+            rows = cursor.fetchall()
+            conn.close()
+            result = [dict(row) for row in rows]
+            print(f"[DB] get_favorites 返回 {len(result)} 条记录")
+            return result
+        except Exception as e:
+            print(f"获取收藏列表失败: {e}")
+            return []
+
+    def is_favorite(self, user_id: int, restaurant_name: str, dish_name: str) -> bool:
+        """检查是否已收藏"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                SELECT 1 FROM favorites 
+                WHERE user_id = ? AND restaurant_name = ? AND dish_name = ?
+            ''', (user_id, restaurant_name, dish_name))
+
+            exists = cursor.fetchone() is not None
+            conn.close()
+            return exists
+        except Exception as e:
+            print(f"检查收藏失败: {e}")
+            return False
+
+    # ========== 避雷相关 ==========
+
+    def add_blacklist(self, user_id: int, restaurant_name: str, dish_name: str, reason: str = None) -> bool:
+        """添加避雷"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            cursor.execute('''
+                INSERT OR IGNORE INTO blacklist (user_id, restaurant_name, dish_name, reason, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (user_id, restaurant_name, dish_name, reason, created_at))
+
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"添加避雷失败: {e}")
+            return False
+
+    def remove_blacklist(self, user_id: int, restaurant_name: str, dish_name: str) -> bool:
+        """移除避雷"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                DELETE FROM blacklist 
+                WHERE user_id = ? AND restaurant_name = ? AND dish_name = ?
+            ''', (user_id, restaurant_name, dish_name))
+
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"移除避雷失败: {e}")
+            return False
+
+    def get_blacklist(self, user_id: int) -> List[Dict]:
+        """获取用户避雷列表"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                SELECT id, restaurant_name, dish_name, reason, created_at
+                FROM blacklist 
+                WHERE user_id = ?
+                ORDER BY created_at DESC
+            ''', (user_id,))
+
+            rows = cursor.fetchall()
+            conn.close()
+            return [dict(row) for row in rows]
+        except Exception as e:
+            print(f"获取避雷列表失败: {e}")
+            return []
+
+    def is_blacklisted(self, user_id: int, restaurant_name: str, dish_name: str) -> bool:
+        """检查是否已避雷"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                SELECT 1 FROM blacklist 
+                WHERE user_id = ? AND restaurant_name = ? AND dish_name = ?
+            ''', (user_id, restaurant_name, dish_name))
+
+            exists = cursor.fetchone() is not None
+            conn.close()
+            return exists
+        except Exception as e:
+            print(f"检查避雷失败: {e}")
             return False
 
 

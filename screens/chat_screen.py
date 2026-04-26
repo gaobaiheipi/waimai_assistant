@@ -119,10 +119,10 @@ class ChatScreen(MDScreen):
         from kivymd.uix.spinner import MDSpinner
         from kivymd.uix.boxlayout import MDBoxLayout
         from kivymd.uix.label import MDLabel
+        from kivymd.uix.dialog import MDDialog
         from kivy.metrics import dp
         from utils.fonts import chinese_font
 
-        # 创建带中文字体的容器
         content = MDBoxLayout(
             orientation="vertical",
             spacing=dp(10),
@@ -146,18 +146,20 @@ class ChatScreen(MDScreen):
         content.add_widget(label)
 
         self.loading_dialog = MDDialog(
-            title="请稍候",
+            title=f"[font={chinese_font}]请稍候[/font]" if chinese_font else "请稍候",
             type="custom",
             content_cls=content
         )
 
-        # 设置对话框标题字体
-        if hasattr(self.loading_dialog, 'title_label'):
-            self.loading_dialog.title_label.font_name = chinese_font
-        # 设置内容字体
-        for child in self.loading_dialog.content_cls.children:
-            if hasattr(child, 'font_name'):
-                child.font_name = chinese_font
+        # 设置标题字体
+        if chinese_font:
+            if hasattr(self.loading_dialog, 'title_label'):
+                self.loading_dialog.title_label.font_name = chinese_font
+            # 设置内容字体
+            if hasattr(self.loading_dialog, 'content_cls'):
+                for child in self.loading_dialog.content_cls.children:
+                    if hasattr(child, 'font_name'):
+                        child.font_name = chinese_font
 
         self.loading_dialog.open()
 

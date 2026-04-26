@@ -37,18 +37,19 @@ class LoginScreen(MDScreen):
 
     def do_login(self):
         """账号密码登录"""
-        phone = self.ids.login_phone.text.strip()
+        phone = self.ids.login_phone.text.strip()  # 这是手机号
         password = self.ids.login_password.text
 
         if not phone or not password:
             self.show_snackbar("请输入手机号和密码")
             return
 
-        result = local_auth.login(phone, password)
+        result = local_auth.login(phone, password)  # phone 是手机号
 
-        if result[0]:  # success
+        if result[0]:
             user_info = result[1] if isinstance(result[1], dict) else {"nickname": phone}
-            self.show_snackbar(f"欢迎回来, {user_info.get('nickname', phone)}")
+            nickname = user_info.get('nickname', user_info.get('username', phone))
+            self.show_snackbar(f"欢迎回来, {nickname}")
             Clock.schedule_once(lambda dt: self.go_home(), 1)
         else:
             self.show_snackbar("手机号或密码错误")
@@ -62,10 +63,10 @@ class LoginScreen(MDScreen):
 
     def do_register(self):
         """注册新账号"""
-        phone = self.ids.reg_phone.text.strip()
+        phone = self.ids.reg_phone.text.strip()  # 手机号
         password = self.ids.reg_password.text
         password2 = self.ids.reg_password2.text
-        nickname = self.ids.reg_nickname.text.strip()
+        nickname = self.ids.reg_nickname.text.strip()  # 昵称
 
         if not phone or not password:
             self.show_snackbar("请填写完整信息")
@@ -83,14 +84,17 @@ class LoginScreen(MDScreen):
             self.show_snackbar("密码至少6位")
             return
 
-        success, result = local_auth.register(phone, password, nickname)
+        if not nickname:
+            nickname = phone  # 如果没有昵称，使用手机号作为昵称
+
+        success, result = local_auth.register(nickname, password, phone)
         if success:
             self.show_snackbar("注册成功，请登录")
             self.toggle_mode()
             self.ids.login_phone.text = phone
             self.ids.login_password.text = ""
         else:
-            self.show_snackbar("该手机号已注册")
+            self.show_snackbar(result)
 
     def show_snackbar(self, message):
         """显示提示（兼容 KivyMD 1.2.0）"""

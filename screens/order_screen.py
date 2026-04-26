@@ -1,11 +1,14 @@
 # screens/order_screen.py
 from kivy.clock import Clock
+from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.screen import MDScreen
 from kivymd.uix.label import MDLabel
 from kivymd.uix.list import OneLineListItem
 from kivymd.uix.dialog import MDDialog
 from kivymd.uix.button import MDFlatButton, MDRaisedButton
+from kivymd.uix.snackbar import Snackbar
 
+from services.db_service import get_db_service
 from services.local_auth import user_session
 from utils.fonts import chinese_font
 
@@ -92,16 +95,18 @@ class OrderScreen(MDScreen):
 
     def view_order_detail(self, order):
         """查看订单详情"""
-        from kivymd.uix.button import MDRaisedButton, MDFlatButton
-        from kivymd.uix.dialog import MDDialog
-        from kivymd.uix.boxlayout import MDBoxLayout
-        from kivymd.uix.label import MDLabel
 
-        # 使用 display_order_id
         order_id = order.get('display_order_id', order.get('id', ''))
         status = order.get('status', '未知状态')
+        restaurant_name = order.get('restaurant_name', '')
+
+        items = order.get('items', [])
+        first_item = items[0] if items else {}
+        dish_name = first_item.get('dish_name', '')
+        dish_price = first_item.get('price', 0)
 
         is_active = status in ['已下单', '商家已接单', '配送中', '即将送达']
+        is_completed = status in ['已完成', '已送达']
 
         content = MDBoxLayout(
             orientation="vertical",
@@ -111,17 +116,18 @@ class OrderScreen(MDScreen):
         )
 
         content_text = (
-            f"商家：{order.get('restaurant_name', order.get('shop', '未知'))}\n"
-            f"金额：¥{order.get('total_price', order.get('price', 0))}\n"
+            f"商家：{restaurant_name}\n"
+            f"菜品：{dish_name}\n"
+            f"金额：¥{order.get('total_price', 0)}\n"
             f"状态：{status}\n"
-            f"时间：{order.get('created_at', order.get('create_time', '未知'))}"
+            f"时间：{order.get('created_at', '未知')}"
         )
 
         info_label = MDLabel(
             text=content_text,
             halign="left",
             size_hint_y=None,
-            height=150
+            height=180
         )
         if chinese_font:
             info_label.font_name = chinese_font
@@ -147,19 +153,131 @@ class OrderScreen(MDScreen):
                 track_btn.font_name = chinese_font
             buttons.append(track_btn)
 
+        if is_completed and not user_session.is_guest:
+            db = get_db_service()
+            user_id = int(user_session.user_id)
+
+            is_faved = db.is_favorite(user_id, restaurant_name, dish_name)
+            is_blocked = db.is_blacklisted(user_id, restaurant_name, dish_name)
+
+            def add_favorite(*args):
+                if is_blocked:
+                    snackbar = Snackbar(
+                        MDLabel(text="该菜品已在避雷列表中，无法收藏", theme_text_color="Custom",
+                                text_color=(1, 1, 1, 1)),
+                        duration=1.5
+                    )
+                    snackbar.open()
+                    return
+                if db.add_favorite(user_id, restaurant_name, dish_name, dish_price):
+                    snackbar = Snackbar(
+                        MDLabel(text="已添加到收藏", theme_text_color="Custom", text_color=(1, 1, 1, 1)),
+                        duration=1.5
+                    )
+                    snackbar.open()
+                    dialog.dismiss()
+                else:
+                    snackbar = Snackbar(
+                        MDLabel(text="添加失败", theme_text_color="Custom", text_color=(1, 1, 1, 1)),
+                        duration=1.5
+                    )
+                    snackbar.open()
+
+            def remove_favorite(*args):
+                if db.remove_favorite(user_id, restaurant_name, dish_name):
+                    snackbar = Snackbar(
+                        MDLabel(text="已移除收藏", theme_text_color="Custom", text_color=(1, 1, 1, 1)),
+                        duration=1.5
+                    )
+                    snackbar.open()
+                    dialog.dismiss()
+                else:
+                    snackbar = Snackbar(
+                        MDLabel(text="移除失败", theme_text_color="Custom", text_color=(1, 1, 1, 1)),
+                        duration=1.5
+                    )
+                    snackbar.open()
+
+            def add_blacklist(*args):
+                if is_faved:
+                    snackbar = Snackbar(
+                        MDLabel(text="该菜品已在收藏列表中，无法避雷", theme_text_color="Custom",
+                                text_color=(1, 1, 1, 1)),
+                        duration=1.5
+                    )
+                    snackbar.open()
+                    return
+                if db.add_blacklist(user_id, restaurant_name, dish_name):
+                    snackbar = Snackbar(
+                        MDLabel(text="已添加到避雷列表", theme_text_color="Custom", text_color=(1, 1, 1, 1)),
+                        duration=1.5
+                    )
+                    snackbar.open()
+                    dialog.dismiss()
+                else:
+                    snackbar = Snackbar(
+                        MDLabel(text="添加失败", theme_text_color="Custom", text_color=(1, 1, 1, 1)),
+                        duration=1.5
+                    )
+                    snackbar.open()
+
+            def remove_blacklist(*args):
+                if db.remove_blacklist(user_id, restaurant_name, dish_name):
+                    snackbar = Snackbar(
+                        MDLabel(text="已移除避雷", theme_text_color="Custom", text_color=(1, 1, 1, 1)),
+                        duration=1.5
+                    )
+                    snackbar.open()
+                    dialog.dismiss()
+                else:
+                    snackbar = Snackbar(
+                        MDLabel(text="移除失败", theme_text_color="Custom", text_color=(1, 1, 1, 1)),
+                        duration=1.5
+                    )
+                    snackbar.open()
+
+            if is_faved:
+                fav_btn = MDRaisedButton(text="取消收藏", on_release=remove_favorite)
+            else:
+                fav_btn = MDRaisedButton(text="收藏", on_release=add_favorite)
+
+            if is_blocked:
+                block_btn = MDRaisedButton(text="取消避雷", on_release=remove_blacklist)
+            else:
+                block_btn = MDRaisedButton(text="避雷", on_release=add_blacklist)
+
+            if is_faved:
+                block_btn.disabled = True
+                block_btn.md_bg_color = (0.7, 0.7, 0.7, 1)
+            if is_blocked:
+                fav_btn.disabled = True
+                fav_btn.md_bg_color = (0.7, 0.7, 0.7, 1)
+
+            if chinese_font:
+                fav_btn.font_name = chinese_font
+                block_btn.font_name = chinese_font
+
+            buttons.insert(0, fav_btn)
+            buttons.insert(1, block_btn)
+
         dialog = MDDialog(
-            title=f"订单 {order_id}",
+            title=f"[font={chinese_font}]订单 {order_id}[/font]" if chinese_font else f"订单 {order_id}",
             type="custom",
             content_cls=content,
             buttons=buttons
         )
 
+        # 设置标题和按钮字体
         if chinese_font:
             if hasattr(dialog, 'title_label'):
                 dialog.title_label.font_name = chinese_font
             for btn in dialog.buttons:
                 if hasattr(btn, 'font_name'):
                     btn.font_name = chinese_font
+            # 设置内容字体
+            for child in content.children:
+                if hasattr(child, 'font_name'):
+                    child.font_name = chinese_font
 
         dialog.open()
 

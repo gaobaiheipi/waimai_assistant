@@ -349,6 +349,23 @@
                         theme_text_color: "Secondary"
                         size_hint_y: None
 
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    size_hint_y: None
+                    height: dp(50)
+                    spacing: dp(16)
+
+                    MDRaisedButton:
+                        text: "❤ 我的收藏"
+                        size_hint_x: 0.5
+                        on_release: root.show_favorites()
+
+                    MDRaisedButton:
+                        text: "⚠ 我的避雷"
+                        size_hint_x: 0.5
+                        on_release: root.show_blacklist()
+
+
                 MDLabel:
                     text: "默认预算（元）"
                     font_style: "Subtitle1"

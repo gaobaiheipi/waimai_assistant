@@ -2,6 +2,7 @@
 from kivy.clock import Clock
 from kivy.metrics import dp
 from kivy.properties import StringProperty, NumericProperty
+from kivymd.uix.boxlayout import MDBoxLayout
 
 from kivymd.uix.screen import MDScreen
 from kivymd.uix.label import MDLabel
@@ -10,6 +11,8 @@ from kivymd.uix.dialog import MDDialog
 
 from services.local_auth import user_session
 import random
+
+from utils.fonts import chinese_font
 
 
 class TrackingScreen(MDScreen):
@@ -335,16 +338,8 @@ class TrackingScreen(MDScreen):
 
     def call_rider(self):
         """联系骑手 - 显示骑手电话"""
-        from utils.fonts import chinese_font
-        from kivymd.uix.dialog import MDDialog
-        from kivymd.uix.button import MDFlatButton, MDRaisedButton
-        from kivy.clock import Clock
 
         if self.rider_phone:
-            # 创建内容容器
-            from kivymd.uix.boxlayout import MDBoxLayout
-            from kivymd.uix.label import MDLabel
-
             content = MDBoxLayout(
                 orientation="vertical",
                 spacing=10,
@@ -364,7 +359,7 @@ class TrackingScreen(MDScreen):
             content.add_widget(info_label)
 
             dialog = MDDialog(
-                title="联系骑手",
+                title=f"[font={chinese_font}]联系骑手[/font]" if chinese_font else "联系骑手",
                 type="custom",
                 content_cls=content,
                 buttons=[
@@ -382,12 +377,13 @@ class TrackingScreen(MDScreen):
                 ]
             )
 
-            # 设置标题字体
-            if hasattr(dialog, 'title_label'):
-                dialog.title_label.font_name = chinese_font
-            for btn in dialog.buttons:
-                if hasattr(btn, 'font_name'):
-                    btn.font_name = chinese_font
+            # 设置标题和按钮字体
+            if chinese_font:
+                if hasattr(dialog, 'title_label'):
+                    dialog.title_label.font_name = chinese_font
+                for btn in dialog.buttons:
+                    if hasattr(btn, 'font_name'):
+                        btn.font_name = chinese_font
 
             dialog.open()
         else:

@@ -6,13 +6,17 @@ from kivymd.uix.screen import MDScreen
 from kivymd.uix.boxlayout import MDBoxLayout
 from kivymd.uix.label import MDLabel
 from kivymd.uix.button import MDRaisedButton, MDFlatButton, MDIconButton
+from kivymd.uix.scrollview import MDScrollView
 from kivymd.uix.textfield import MDTextField
 from kivymd.uix.chip import MDChip, MDChipText
 from kivymd.uix.snackbar import MDSnackbar
 from kivymd.uix.list import MDList, OneLineListItem, OneLineAvatarIconListItem
 from kivymd.uix.card import MDCard
 from kivymd.uix.dialog import MDDialog
+from kivymd.uix.button import MDIconButton
+from kivymd.uix.list import OneLineAvatarIconListItem
 
+from services.db_service import get_db_service
 from services.local_auth import user_session, local_auth
 from services.order_stats import order_stats
 
@@ -39,11 +43,9 @@ class PreferencesScreen(MDScreen):
         self.avoid_foods = user_session.get_prefs().get("avoid_foods", [])
         self.load_preferences()
 
-        # 延迟执行，确保KV部件已创建
         Clock.schedule_once(self._fix_chinese_display, 0)
         Clock.schedule_once(self._update_ui, 0.1)
 
-        # 检查是否需要显示订单总结弹窗（非游客模式）
         if not user_session.is_guest:
             Clock.schedule_once(self._check_order_summary_popup, 0.5)
 
@@ -80,23 +82,23 @@ class PreferencesScreen(MDScreen):
 
     def _update_ui(self, dt):
         """更新UI显示（安全版本，检查控件是否存在）"""
-        # 预算输入
         if hasattr(self.ids, 'budget_input') and self.ids.budget_input:
             self.ids.budget_input.text = self.budget_text
 
-        # 地址输入
         prefs = user_session.get_prefs()
         if hasattr(self.ids, 'address_input') and self.ids.address_input:
             self.ids.address_input.text = prefs.get("default_address", "") or ""
 
-        # 昵称显示
         if hasattr(self.ids, 'nickname_label') and self.ids.nickname_label:
-            self.ids.nickname_label.text = f"当前用户：{user_session.nickname}"
+            if user_session.is_guest:
+                self.ids.nickname_label.text = "当前用户：游客"
+            else:
+                nickname = user_session.nickname
+                if not nickname or nickname == "":
+                    nickname = f"用户{user_session.user_id}"
+                self.ids.nickname_label.text = f"当前用户：{nickname}"
 
-        # 更新辣度芯片
         self._update_spicy_chips()
-
-        # 更新忌口列表
         self._update_avoid_list()
 
     def _update_spicy_chips(self):
@@ -177,7 +179,7 @@ class PreferencesScreen(MDScreen):
     def confirm_remove_avoid(self, food):
         """确认删除忌口"""
         dialog = MDDialog(
-            title="删除忌口",
+            title=f"[font={chinese_font}]删除忌口[/font]" if chinese_font else "删除忌口",
             text=f"确定要删除 {food} 吗？",
             buttons=[
                 MDFlatButton(
@@ -223,14 +225,18 @@ class PreferencesScreen(MDScreen):
 
     def _show_order_summary_dialog(self, summary):
         """显示订单总结弹窗"""
+
         avg_budget = summary.get('avg_budget', 30)
         spicy = summary.get('spicy', '微辣')
         orders_since_last = summary.get('orders_since_last', 20)
+        total_orders = summary.get('total_orders', 0)
+
+        print(f"[订单总结弹窗] 总订单: {total_orders}, 自上次以来: {orders_since_last}")
 
         content_layout = MDBoxLayout(
             orientation="vertical",
-            spacing=dp(10),
-            padding=dp(20),
+            spacing=10,
+            padding=20,
             adaptive_height=True
         )
 
@@ -245,27 +251,46 @@ class PreferencesScreen(MDScreen):
             text=message,
             halign="left",
             size_hint_y=None,
-            height=dp(150)
+            height=150
         )
         if chinese_font:
             msg_label.font_name = chinese_font
 
         content_layout.add_widget(msg_label)
 
+        new_milestone = (total_orders // 20) * 20
+        print(f"[订单总结弹窗] 新里程碑: {new_milestone}")
+
+        def cancel_and_update_count(*args):
+            """取消但更新计数，避免重复弹窗"""
+            current_prefs = user_session.get_prefs()
+            current_prefs['last_summary_count'] = new_milestone
+            if 'last_summary_order_count' in current_prefs:
+                del current_prefs['last_summary_order_count']
+            result = user_session.update_prefs(current_prefs)
+            print(f"[订单总结] 取消，保存 last_summary_count = {new_milestone}, 结果: {result}")
+
+            # 立即验证
+            verify_prefs = user_session.get_prefs()
+            print(f"[订单总结] 验证读取: last_summary_count = {verify_prefs.get('last_summary_count', 0)}")
+
+            dialog.dismiss()
+
         def apply_preferences(*args):
             """应用弹窗中的偏好"""
+            db = get_db_service()
+            user_id = int(user_session.user_id)
             current_prefs = user_session.get_prefs()
             current_prefs['default_budget'] = avg_budget
             current_prefs['budget_range'] = str(avg_budget)
             current_prefs['spicy_level'] = spicy
             current_prefs['spiciness_level'] = spicy
+            current_prefs['last_summary_count'] = new_milestone
+            if 'last_summary_order_count' in current_prefs:
+                del current_prefs['last_summary_order_count']
 
             user_session.update_prefs(current_prefs)
-
-            from services.order_stats import order_stats
-            prefs = user_session.get_prefs()
-            prefs['last_summary_order_count'] = len(order_stats.get_non_drink_orders())
-            user_session.update_prefs(prefs)
+            print(f"[订单总结] 保存 last_summary_count = {new_milestone}")
 
             self.load_preferences()
             self._update_ui(0)
@@ -273,16 +298,8 @@ class PreferencesScreen(MDScreen):
             dialog.dismiss()
             self.show_snackbar("偏好已更新")
 
-        def cancel_and_update_count(*args):
-            """取消但更新计数"""
-            from services.order_stats import order_stats
-            prefs = user_session.get_prefs()
-            prefs['last_summary_order_count'] = len(order_stats.get_non_drink_orders())
-            user_session.update_prefs(prefs)
-            dialog.dismiss()
-
         dialog = MDDialog(
-            title="订单总结",
+            title=f"[font={chinese_font}]订单总结[/font]" if chinese_font else "订单总结",
             type="custom",
             content_cls=content_layout,
             buttons=[
@@ -296,16 +313,6 @@ class PreferencesScreen(MDScreen):
                 )
             ]
         )
-
-        # 设置字体
-        if chinese_font:
-            if hasattr(dialog, 'title_label'):
-                dialog.title_label.font_name = chinese_font
-            for btn in dialog.buttons:
-                if hasattr(btn, 'font_name'):
-                    btn.font_name = chinese_font
-
-        dialog.open()
 
         # 设置字体
         if chinese_font:
@@ -372,6 +379,232 @@ class PreferencesScreen(MDScreen):
 
         # 刷新 UI 显示
         self._update_ui(0)
+
+    # ========== 收藏和避雷列表 ==========
+
+    def show_favorites(self):
+        """显示收藏列表（带编号）"""
+
+        if user_session.is_guest:
+            self.show_snackbar("游客模式无法使用收藏功能")
+            return
+
+        db = get_db_service()
+        user_id = int(user_session.user_id)
+        favorites = db.get_favorites(user_id)
+
+        print(f"[收藏列表] 获取到 {len(favorites)} 条记录")
+
+        if not favorites:
+            dialog = MDDialog(
+                title=f"[font={chinese_font}]我的收藏[/font]" if chinese_font else "我的收藏",
+                type="simple",
+                text="暂无收藏菜品",
+                buttons=[MDFlatButton(text="关闭", on_release=lambda x: dialog.dismiss())]
+            )
+            if chinese_font and hasattr(dialog, 'title_label'):
+                dialog.title_label.font_name = chinese_font
+            dialog.open()
+            return
+
+        # 构建显示文本
+        text_lines = []
+        for idx, item in enumerate(favorites, 1):
+            text_lines.append(f"{idx}. {item['restaurant_name']} - {item['dish_name']}")
+
+        # 保存 favorites 列表供后续使用
+        self.current_favorites = favorites
+
+        # 内容布局
+        content = MDBoxLayout(
+            orientation="vertical",
+            spacing=dp(10),
+            padding=dp(20),
+            size_hint_y=None,
+            height=dp(300)
+        )
+
+        # 显示列表的标签
+        list_text = "\n".join(text_lines)
+        list_label = MDLabel(
+            text=list_text,
+            halign="left",
+            valign="top",
+            size_hint_y=None,
+            height=dp(250)
+        )
+        list_label.bind(size=list_label.setter('text_size'))
+        if chinese_font:
+            list_label.font_name = chinese_font
+
+        # 编号输入框
+        input_label = MDLabel(
+            text="请输入要移除的编号:",
+            size_hint_y=None,
+            height=dp(30)
+        )
+        if chinese_font:
+            input_label.font_name = chinese_font
+
+        number_input = MDTextField(
+            hint_text="编号",
+            input_filter="int",
+            size_hint_y=None,
+            height=dp(40),
+            mode="rectangle"
+        )
+        if chinese_font:
+            number_input.font_name = chinese_font
+
+        content.add_widget(list_label)
+        content.add_widget(input_label)
+        content.add_widget(number_input)
+
+        def do_remove(*args):
+            try:
+                num = int(number_input.text.strip())
+                if 1 <= num <= len(favorites):
+                    item_to_remove = favorites[num - 1]
+                    db.remove_favorite(user_id, item_to_remove['restaurant_name'], item_to_remove['dish_name'])
+                    self.show_snackbar(f"已移除: {item_to_remove['restaurant_name']} - {item_to_remove['dish_name']}")
+                    dialog.dismiss()
+                    # 延迟刷新
+                    from kivy.clock import Clock
+                    Clock.schedule_once(lambda dt: self.show_favorites(), 0.2)
+                else:
+                    self.show_snackbar(f"请输入 1-{len(favorites)} 之间的编号")
+            except ValueError:
+                self.show_snackbar("请输入有效的编号")
+
+        dialog = MDDialog(
+            title=f"[font={chinese_font}]我的收藏[/font]" if chinese_font else "我的收藏",
+            type="custom",
+            content_cls=content,
+            buttons=[
+                MDFlatButton(text="取消", on_release=lambda x: dialog.dismiss()),
+                MDRaisedButton(text="移除", on_release=do_remove)
+            ]
+        )
+
+        if chinese_font:
+            if hasattr(dialog, 'title_label'):
+                dialog.title_label.font_name = chinese_font
+            for btn in dialog.buttons:
+                if hasattr(btn, 'font_name'):
+                    btn.font_name = chinese_font
+
+        dialog.open()
+
+    def show_blacklist(self):
+        """显示避雷列表（带编号）"""
+
+        if user_session.is_guest:
+            self.show_snackbar("游客模式无法使用避雷功能")
+            return
+
+        db = get_db_service()
+        user_id = int(user_session.user_id)
+        blacklist = db.get_blacklist(user_id)
+
+        print(f"[避雷列表] 获取到 {len(blacklist)} 条记录")
+
+        if not blacklist:
+            dialog = MDDialog(
+                title=f"[font={chinese_font}]我的避雷[/font]" if chinese_font else "我的避雷",
+                type="simple",
+                text="暂无避雷菜品",
+                buttons=[MDFlatButton(text="关闭", on_release=lambda x: dialog.dismiss())]
+            )
+            if chinese_font and hasattr(dialog, 'title_label'):
+                dialog.title_label.font_name = chinese_font
+            dialog.open()
+            return
+
+        # 构建显示文本
+        text_lines = []
+        for idx, item in enumerate(blacklist, 1):
+            line = f"{idx}. {item['restaurant_name']} - {item['dish_name']}"
+            if item.get('reason'):
+                line += f"（原因：{item['reason']}）"
+            text_lines.append(line)
+
+        self.current_blacklist = blacklist
+
+        content = MDBoxLayout(
+            orientation="vertical",
+            spacing=dp(10),
+            padding=dp(20),
+            size_hint_y=None,
+            height=dp(300)
+        )
+
+        list_text = "\n".join(text_lines)
+        list_label = MDLabel(
+            text=list_text,
+            halign="left",
+            valign="top",
+            size_hint_y=None,
+            height=dp(250)
+        )
+        list_label.bind(size=list_label.setter('text_size'))
+        if chinese_font:
+            list_label.font_name = chinese_font
+
+        input_label = MDLabel(
+            text="请输入要移除的编号:",
+            size_hint_y=None,
+            height=dp(30)
+        )
+        if chinese_font:
+            input_label.font_name = chinese_font
+
+        number_input = MDTextField(
+            hint_text="编号",
+            input_filter="int",
+            size_hint_y=None,
+            height=dp(40),
+            mode="rectangle"
+        )
+        if chinese_font:
+            number_input.font_name = chinese_font
+
+        content.add_widget(list_label)
+        content.add_widget(input_label)
+        content.add_widget(number_input)
+
+        def do_remove(*args):
+            try:
+                num = int(number_input.text.strip())
+                if 1 <= num <= len(blacklist):
+                    item_to_remove = blacklist[num - 1]
+                    db.remove_blacklist(user_id, item_to_remove['restaurant_name'], item_to_remove['dish_name'])
+                    self.show_snackbar(f"已移除: {item_to_remove['restaurant_name']} - {item_to_remove['dish_name']}")
+                    dialog.dismiss()
+                    from kivy.clock import Clock
+                    Clock.schedule_once(lambda dt: self.show_blacklist(), 0.2)
+                else:
+                    self.show_snackbar(f"请输入 1-{len(blacklist)} 之间的编号")
+            except ValueError:
+                self.show_snackbar("请输入有效的编号")
+
+        dialog = MDDialog(
+            title=f"[font={chinese_font}]我的避雷[/font]" if chinese_font else "我的避雷",
+            type="custom",
+            content_cls=content,
+            buttons=[
+                MDFlatButton(text="取消", on_release=lambda x: dialog.dismiss()),
+                MDRaisedButton(text="移除", on_release=do_remove)
+            ]
+        )
+
+        if chinese_font:
+            if hasattr(dialog, 'title_label'):
+                dialog.title_label.font_name = chinese_font
+            for btn in dialog.buttons:
+                if hasattr(btn, 'font_name'):
+                    btn.font_name = chinese_font
+
+        dialog.open()
 
     # ========== 账号管理 ==========
 
@@ -476,7 +709,7 @@ class PreferencesScreen(MDScreen):
                 self.show_snackbar(f"密码修改失败: {msg}")
 
         dialog = MDDialog(
-            title="修改密码",
+            title=f"[font={chinese_font}]修改密码[/font]" if chinese_font else "修改密码",
             type="custom",
             content_cls=content,
             buttons=[
