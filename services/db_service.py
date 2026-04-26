@@ -18,7 +18,6 @@ class DatabaseService:
 
     def _get_connection(self):
         """获取数据库连接"""
-        # 确保目录存在
         db_dir = os.path.dirname(self.db_path)
         os.makedirs(db_dir, exist_ok=True)
 
@@ -55,11 +54,12 @@ class DatabaseService:
             )
         ''')
 
-        # orders 表
+        # orders 表 - 添加 order_seq 字段
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS orders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
+                order_seq INTEGER NOT NULL DEFAULT 1,
                 restaurant_name VARCHAR(100) NOT NULL,
                 items_json TEXT NOT NULL,
                 total_price VARCHAR(20) NOT NULL,
@@ -71,12 +71,26 @@ class DatabaseService:
                 rider_phone VARCHAR(20),
                 rider_location VARCHAR(100),
                 current_status_time VARCHAR(20),
-                FOREIGN KEY (user_id) REFERENCES users(id)
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                UNIQUE(user_id, order_seq)
             )
         ''')
 
-        # 检查并添加缺失的列
+        # 为已存在的表添加缺失的列
         self._add_missing_columns(cursor)
+
+        # 为已存在的表添加 order_seq 列并填充数据
+        cursor.execute("PRAGMA table_info(orders)")
+        existing_columns = [col[1] for col in cursor.fetchall()]
+        if 'order_seq' not in existing_columns:
+            cursor.execute('ALTER TABLE orders ADD COLUMN order_seq INTEGER DEFAULT 1')
+            cursor.execute('''
+                UPDATE orders SET order_seq = (
+                    SELECT COUNT(*) FROM orders o2 
+                    WHERE o2.user_id = orders.user_id AND o2.id <= orders.id
+                )
+            ''')
+            print("[数据库] 已为现有订单填充 order_seq")
 
         conn.commit()
         conn.close()
@@ -111,16 +125,13 @@ class DatabaseService:
             conn = self._get_connection()
             cursor = conn.cursor()
 
-            # 检查用户名是否存在
             cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
             if cursor.fetchone():
                 return False, "用户名已存在"
 
-            # 密码哈希
             password_hash = hashlib.sha256(password.encode()).hexdigest()
             created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            # 插入用户
             cursor.execute('''
                 INSERT INTO users (username, password_hash, phone, created_at)
                 VALUES (?, ?, ?, ?)
@@ -128,7 +139,6 @@ class DatabaseService:
 
             user_id = cursor.lastrowid
 
-            # 初始化默认偏好
             cursor.execute('''
                 INSERT INTO preferences (user_id, spiciness_level, budget_range, avoid_foods, updated_at)
                 VALUES (?, ?, ?, ?, ?)
@@ -182,7 +192,6 @@ class DatabaseService:
             conn = self._get_connection()
             cursor = conn.cursor()
 
-            # 验证旧密码
             old_hash = hashlib.sha256(old_password.encode()).hexdigest()
             cursor.execute(
                 "SELECT id FROM users WHERE id = ? AND password_hash = ?",
@@ -191,7 +200,6 @@ class DatabaseService:
             if not cursor.fetchone():
                 return False, "旧密码错误"
 
-            # 更新新密码
             new_hash = hashlib.sha256(new_password.encode()).hexdigest()
             cursor.execute(
                 "UPDATE users SET password_hash = ? WHERE id = ?",
@@ -218,7 +226,6 @@ class DatabaseService:
 
         if prefs:
             prefs_dict = dict(prefs)
-            # 解析 avoid_foods JSON
             try:
                 avoid_foods = prefs_dict.get('avoid_foods', '[]')
                 if isinstance(avoid_foods, str):
@@ -228,14 +235,11 @@ class DatabaseService:
             except:
                 prefs_dict['avoid_foods'] = []
 
-            # 关键修复：spicy_level 应该等于 spiciness_level（数据库存的值）
             prefs_dict['spicy_level'] = prefs_dict.get('spiciness_level', '微辣')
             prefs_dict['default_budget'] = int(prefs_dict.get('budget_range', '30'))
 
-            print(f"从数据库读取偏好: spicy_level={prefs_dict['spicy_level']}, budget={prefs_dict['default_budget']}")
             return prefs_dict
         else:
-            print(f"用户 {user_id} 没有偏好记录，返回默认")
             return {
                 'user_id': user_id,
                 'spiciness_level': '微辣',
@@ -254,64 +258,35 @@ class DatabaseService:
 
             updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            # 处理 avoid_foods 为 JSON 字符串
             avoid_foods = prefs.get('avoid_foods', [])
             if isinstance(avoid_foods, list):
                 avoid_foods_json = json.dumps(avoid_foods, ensure_ascii=False)
             else:
                 avoid_foods_json = '[]'
 
-            # 修复：优先使用 spicy_level，如果没有再用 spiciness_level
-            # 用户保存时传的是 spicy_level，所以要先取 spicy_level
             spiciness = prefs.get('spicy_level', prefs.get('spiciness_level', '微辣'))
-
-            # 修复：优先使用 default_budget，如果没有再用 budget_range
             budget = prefs.get('default_budget', prefs.get('budget_range', '30'))
-
-            # 获取地址
             address = prefs.get('default_address', '')
 
-            print(f"保存到数据库: spicy_level={spiciness}, budget={budget}, avoid={avoid_foods_json}")
-
-            # 使用 INSERT OR REPLACE 确保数据存在
             cursor.execute('''
                 INSERT OR REPLACE INTO preferences 
                 (user_id, spiciness_level, budget_range, default_address, avoid_foods, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?)
-            ''', (
-                user_id,
-                spiciness,
-                str(budget),
-                address,
-                avoid_foods_json,
-                updated_at
-            ))
+            ''', (user_id, spiciness, str(budget), address, avoid_foods_json, updated_at))
 
             conn.commit()
-
-            # 验证是否保存成功
-            cursor.execute("SELECT * FROM preferences WHERE user_id = ?", (user_id,))
-            result = cursor.fetchone()
             conn.close()
-
-            if result:
-                print(f"偏好保存成功: user_id={user_id}, spiciness_level={result['spiciness_level']}")
-                return True
-            else:
-                print(f"偏好保存失败: user_id={user_id}")
-                return False
+            return True
 
         except Exception as e:
             print(f"更新偏好失败: {e}")
-            import traceback
-            traceback.print_exc()
             return False
 
     # ========== 订单相关 ==========
 
     def create_order(self, user_id: int, restaurant_name: str,
                      items: List[Dict], total_price: float) -> tuple:
-        """创建订单"""
+        """创建订单，返回 (success, display_order_id)"""
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
@@ -319,17 +294,25 @@ class DatabaseService:
             created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             items_json = json.dumps(items, ensure_ascii=False)
 
+            # 获取该用户的最大订单序号
+            cursor.execute(
+                "SELECT COALESCE(MAX(order_seq), 0) FROM orders WHERE user_id = ?",
+                (user_id,)
+            )
+            max_seq = cursor.fetchone()[0]
+            new_seq = max_seq + 1
+
             cursor.execute('''
                 INSERT INTO orders 
-                (user_id, restaurant_name, items_json, total_price, status, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (user_id, restaurant_name, items_json, str(total_price), '已下单', created_at))
+                (user_id, order_seq, restaurant_name, items_json, total_price, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (user_id, new_seq, restaurant_name, items_json, str(total_price), '已下单', created_at))
 
-            order_id = cursor.lastrowid
             conn.commit()
             conn.close()
 
-            return True, order_id
+            display_order_id = f"{user_id}_{new_seq}"
+            return True, display_order_id
 
         except Exception as e:
             return False, str(e)
@@ -352,6 +335,7 @@ class DatabaseService:
         result = []
         for order in orders:
             order_dict = dict(order)
+            order_dict['display_order_id'] = f"{user_id}_{order_dict['order_seq']}"
             try:
                 order_dict['items'] = json.loads(order_dict['items_json'])
             except:
@@ -362,7 +346,7 @@ class DatabaseService:
         return result
 
     def get_order_by_id(self, order_id: int) -> Optional[Dict]:
-        """根据ID获取订单"""
+        """根据数据库ID获取订单"""
         conn = self._get_connection()
         cursor = conn.cursor()
 
@@ -372,6 +356,7 @@ class DatabaseService:
 
         if order:
             order_dict = dict(order)
+            order_dict['display_order_id'] = f"{order_dict['user_id']}_{order_dict['order_seq']}"
             try:
                 order_dict['items'] = json.loads(order_dict['items_json'])
             except:
@@ -380,6 +365,32 @@ class DatabaseService:
             return order_dict
         return None
 
+    def get_order_tracking_info(self, order_id: int) -> Optional[Dict]:
+        """获取订单追踪信息"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                SELECT id, user_id, order_seq, restaurant_name, status, created_at, 
+                       estimated_delivery_time, rider_name, rider_phone, 
+                       rider_location, current_status_time
+                FROM orders 
+                WHERE id = ?
+            ''', (order_id,))
+
+            row = cursor.fetchone()
+            conn.close()
+
+            if row:
+                result = dict(row)
+                result['display_order_id'] = f"{result['user_id']}_{result['order_seq']}"
+                return result
+            return None
+
+        except Exception as e:
+            print(f"获取追踪信息失败: {e}")
+            return None
 
     def update_order_status(self, order_id: int, status: str) -> bool:
         """更新订单状态"""
@@ -391,12 +402,12 @@ class DatabaseService:
 
             if completed_at:
                 cursor.execute('''
-                       UPDATE orders SET status = ?, completed_at = ? WHERE id = ?
-                   ''', (status, completed_at, order_id))
+                    UPDATE orders SET status = ?, completed_at = ? WHERE id = ?
+                ''', (status, completed_at, order_id))
             else:
                 cursor.execute('''
-                       UPDATE orders SET status = ? WHERE id = ?
-                   ''', (status, order_id))
+                    UPDATE orders SET status = ? WHERE id = ?
+                ''', (status, order_id))
 
             conn.commit()
             conn.close()
@@ -405,34 +416,6 @@ class DatabaseService:
         except Exception as e:
             print(f"更新订单状态失败: {e}")
             return False
-
-    def get_order_tracking_info(self, order_id: int) -> Optional[Dict]:
-        """获取订单追踪信息"""
-        try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-
-            # 使用 id 而不是 order_id（因为主键是 id）
-            cursor.execute('''
-                SELECT id, restaurant_name, status, created_at, 
-                       estimated_delivery_time, rider_name, rider_phone, 
-                       rider_location, current_status_time
-                FROM orders 
-                WHERE id = ?
-            ''', (order_id,))
-
-            row = cursor.fetchone()
-            conn.close()
-
-            if row:
-                return dict(row)
-            return None
-
-        except Exception as e:
-            print(f"获取追踪信息失败: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
 
 
 # 单例
