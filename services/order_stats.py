@@ -160,7 +160,6 @@ class OrderStatsService:
         if avg_budget > 100:
             avg_budget = 100
 
-        # 获取最常点的辣度
         most_common_spicy = spicy_counter.most_common(1)
         most_common_spicy = most_common_spicy[0][0] if most_common_spicy else '微辣'
 

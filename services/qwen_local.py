@@ -114,7 +114,7 @@ class QwenRouterService:
                     return
 
                 print("\n[2/2] 尝试加载 3B 生成模型...")
-                # self._load_large_model()
+                self._load_large_model()
 
                 self.is_ready = True
                 if callback:
@@ -198,8 +198,6 @@ class QwenRouterService:
             self.model_large = None
             return False
 
-    # ========== 辅助方法 ==========
-
     def _parse_budget_from_input(self, user_input: str, default_budget: int = 30) -> dict:
         """从用户输入中解析预算信息"""
         result = {
@@ -268,14 +266,12 @@ class QwenRouterService:
 
         user_input_lower = user_input.lower()
 
-        # ========== 预算解析 ==========
         budget_info = self._parse_budget_from_input(user_input, user_prefs.get('default_budget', 30))
         result["budget"] = budget_info["budget"]
         result["budget_min"] = budget_info["budget_min"]
         result["budget_max"] = budget_info["budget_max"]
         result["budget_type"] = budget_info["budget_type"]
 
-        # ========== 菜系解析 ==========
         cuisines = ["川菜", "粤菜", "湘菜", "东北菜", "日料", "韩餐", "西餐", "火锅", "小吃", "轻食",
                     "西北菜", "东南亚", "港式", "清真", "新疆菜", "台湾菜", "京菜", "素食", "海鲜", "鲁菜", "甜品",
                     "烧烤", "串串", "饮品"]
@@ -284,11 +280,9 @@ class QwenRouterService:
                 result["cuisine"] = c
                 break
 
-        # 如果菜系是甜品或饮品，辣度默认不辣
         if result["cuisine"] in ["甜品", "饮品"]:
             result["spicy"] = "不辣"
 
-        # ========== 辣度解析 ==========
         if re.search(r'不吃辣|不要辣|我不吃辣', user_input_lower):
             result["spicy"] = "不辣"
         elif "特辣" in user_input:
@@ -298,30 +292,22 @@ class QwenRouterService:
         elif "微辣" in user_input:
             result["spicy"] = "微辣"
 
-        # ========== 忌口解析 ==========
         avoid_match = re.search(r'不要([\u4e00-\u9fa5]{2,4})', user_input)
         if avoid_match:
             result["avoid"] = [avoid_match.group(1)]
 
-        # ========== 意图判断 ==========
         user_lower = user_input.lower()
 
-        # 尝试新的请求
         if re.search(r'想尝试新的|尝试新|换换口味|新口味', user_lower):
             result["action"] = "recommend_new"
-        # 修改指令
         elif re.search(r'提高预算|降低预算|更贵|更便宜|改为|换成|不要|排除|换一批|重新推荐', user_lower):
             result["action"] = "modify"
-        # 下单指令
         elif re.search(r'下单|确认|就这个', user_lower):
             result["action"] = "order"
-        # 查询指令
         elif re.search(r'订单状态|追踪|查询', user_lower):
             result["action"] = "query"
-        # 取消指令
         elif re.search(r'取消', user_lower):
             result["action"] = "cancel"
-        # 推荐指令（默认）
         else:
             result["action"] = "recommend"
 
@@ -501,7 +487,6 @@ class QwenRouterService:
         exclude_ids = exclude_ids or []
         avoid = avoid or []
 
-        # 获取用户ID（用于收藏和避雷）
         user_id = None
         if not user_session.is_guest:
             try:
@@ -509,7 +494,6 @@ class QwenRouterService:
             except:
                 pass
 
-        # 获取收藏和避雷列表
         favorite_dishes = set()
         blacklist_dishes = set()
 
@@ -520,7 +504,6 @@ class QwenRouterService:
             for bl in db.get_blacklist(user_id):
                 blacklist_dishes.add((bl['restaurant_name'], bl['dish_name']))
 
-        # 获取常点信息
         try_new_mode = self.conversation_context.get('try_new_mode', False)
         frequent_dish_names = []
         frequent_restaurant_names = []
@@ -551,39 +534,30 @@ class QwenRouterService:
             restaurant_name = restaurant["name"]
             price = dish["price"]
 
-            # 预算过滤
             if price < price_min or price > price_max:
                 continue
-            # 菜系过滤
             if cuisine and cuisine not in restaurant["cuisine"]:
                 continue
-            # 关键词过滤
             if keyword and keyword not in dish_name:
                 continue
-            # 辣度过滤
             if spicy:
                 dish_spicy = dish.get("spicy", "微辣")
                 if not match_spicy(dish_spicy, spicy):
                     continue
-            # 忌口过滤
             if avoid:
                 if self._contains_avoid_ingredient(dish_name, avoid):
                     continue
-            # 已推荐排除
             if dish["id"] in exclude_ids:
                 continue
 
-            # ========== 避雷过滤：不推荐任何避雷菜品 ==========
             if (restaurant_name, dish_name) in blacklist_dishes:
                 print(f"[避雷过滤] 跳过避雷菜品: {restaurant_name} - {dish_name}")
                 continue
 
-            # 标记是否为收藏
             is_favorite = (restaurant_name, dish_name) in favorite_dishes
 
-            # 标记是否为常点
             is_frequent = False
-            if not is_favorite:  # 收藏优先级更高
+            if not is_favorite:
                 if dish_name in frequent_dish_names:
                     is_frequent = True
                 elif restaurant_name in frequent_restaurant_names:
@@ -593,7 +567,6 @@ class QwenRouterService:
             rec['is_frequent'] = is_frequent
             filtered.append(rec)
 
-        # 排序：收藏优先 > 常点优先 > 评分 > 价格
         if try_new_mode:
             filtered.sort(key=lambda x: (
                 -x.get('is_favorite', False),
@@ -650,15 +623,12 @@ class QwenRouterService:
         """从 mock 数据集获取推荐（排除火锅、串串、甜品、饮品）"""
         all_items = self._get_all_dishes_with_restaurant()
 
-        # 甜品关键词
         dessert_keywords = ["蛋糕", "慕斯", "芝士", "提拉米苏", "泡芙", "马卡龙", "布丁", "双皮奶", "班戟", "千层", "冰淇淋",
                             "甜品", "甜点", "奶油", "巧克力蛋糕", "芒果慕斯", "芝士蛋糕", "杨枝甘露"]
 
-        # 饮品关键词
         drinks_keywords = ["奶茶", "咖啡", "柠檬茶", "果茶", "拿铁", "卡布奇诺", "美式", "焦糖", "抹茶", "百香果", "金桔",
                            "养乐多", "可乐", "雪碧", "果汁", "红茶", "绿茶", "乌龙茶", "奶盖", "波霸", "珍珠", "椰奶"]
 
-        # 甜品饮品菜系
         dessert_drink_cuisines = ["甜品", "饮品"]
 
         filtered_items = []
@@ -666,16 +636,12 @@ class QwenRouterService:
             restaurant_cuisine = item["restaurant"]["cuisine"]
             dish_name = item["dish"]["name"]
 
-            # 排除火锅和串串
             if restaurant_cuisine == "火锅" or restaurant_cuisine == "串串":
                 continue
 
-             # 如果用户指定了菜系为甜品或饮品，则保留该类菜品，不排除
             if cuisine in dessert_drink_cuisines:
-                # 用户想要甜品或饮品，只保留对应菜系的菜品
                 if restaurant_cuisine != cuisine:
                     continue
-                # 同时按关键词保留
                 is_match = False
                 if cuisine == "饮品":
                     for kw in drinks_keywords:
@@ -690,7 +656,6 @@ class QwenRouterService:
                 if not is_match:
                     continue
             else:
-                # 用户未指定甜品饮品菜系时，排除甜品和饮品
                 if restaurant_cuisine in dessert_drink_cuisines:
                     continue
                 is_dessert_or_drink = False
@@ -710,7 +675,6 @@ class QwenRouterService:
 
         print(f"[排除火锅串串甜品饮品] 剩余菜品数: {len(filtered_items)}")
 
-        # 统一的预算筛选逻辑
         if budget_type == "range" and budget_min is not None and budget_max is not None:
             price_min = budget_min
             price_max = budget_max
@@ -731,8 +695,6 @@ class QwenRouterService:
 
         return filtered[:5]
 
-    # ========== 火锅和串串推荐 ==========
-
     def _get_hotpot_recommendations(self, budget: float, spicy: str, avoid: list = None,
                                     budget_min: float = None, budget_max: float = None,
                                     budget_type: str = "exact") -> dict:
@@ -751,22 +713,17 @@ class QwenRouterService:
         else:
             price_min = int(budget * 0.9)
             price_max = int(budget * 1.1)
-
-        # 获取已推荐的餐厅ID
         recommended_restaurant_ids = self.conversation_context.get("recommended_restaurant_ids", [])
 
-        # 获取所有火锅餐厅
         hotpot_restaurants = [r for r in RESTAURANTS if r["cuisine"] == "火锅"]
         if not hotpot_restaurants:
             return None
 
-        # 排除已推荐的餐厅
         available_restaurants = [r for r in hotpot_restaurants if r["id"] not in recommended_restaurant_ids]
         if not available_restaurants:
             self.conversation_context["recommended_restaurant_ids"] = []
             available_restaurants = hotpot_restaurants
 
-        # 按评分排序
         for restaurant in sorted(available_restaurants, key=lambda x: x["rating"], reverse=True):
             all_dishes = []
             for item in self._get_all_dishes_with_restaurant():
@@ -783,14 +740,12 @@ class QwenRouterService:
                 else:
                     side_dishes.append(item)
 
-            # 获取已推荐的锅底ID
             recommended_broth_ids = self.conversation_context.get("recommended_broth_ids", [])
             available_broths = [b for b in broths if b["dish"]["id"] not in recommended_broth_ids]
             if not available_broths:
                 self.conversation_context["recommended_broth_ids"] = []
                 available_broths = broths
 
-            # 选择合适的锅底
             selected_broth = None
             for b in available_broths:
                 dish_spicy = b["dish"]["spicy"]
@@ -815,20 +770,17 @@ class QwenRouterService:
 
             broth_price = selected_broth["dish"]["price"]
 
-            # 关键：预算必须大于锅底价格 + 最便宜配菜的价格
             if side_dishes:
                 min_side_price = min(s["dish"]["price"] for s in side_dishes)
                 if budget < broth_price + min_side_price:
                     print(f"[火锅] 预算{budget}元只够锅底({broth_price}元)，不够配菜({min_side_price}元)，跳过此餐厅")
                     continue
 
-            # 如果预算刚刚够锅底，没有剩余钱买配菜，也不推荐
             remaining_budget = budget - broth_price
             if remaining_budget <= 0:
                 print(f"[火锅] 预算{budget}元只够锅底({broth_price}元)，没有剩余预算买配菜，跳过")
                 continue
 
-            # 选择配菜
             selected_sides = []
             sorted_sides = sorted(side_dishes, key=lambda x: x["dish"]["price"])
 
@@ -840,12 +792,10 @@ class QwenRouterService:
                     selected_sides.append(side)
                     remaining_budget -= dish["price"]
 
-            # 必须至少有一个配菜
             if not selected_sides:
                 print(f"[火锅] 预算{budget}元下，餐厅{restaurant['name']}没有找到合适的配菜，跳过")
                 continue
 
-            # 成功找到合适的火锅推荐
             self.conversation_context["recommended_restaurant_ids"].append(restaurant["id"])
             self.conversation_context["recommended_broth_ids"].append(selected_broth["dish"]["id"])
 
@@ -925,7 +875,6 @@ class QwenRouterService:
 
             broth_price = selected_broth["dish"]["price"]
 
-            # 检查预算是否足够锅底+至少一个串串
             if skewers:
                 min_skewer_price = min(s["dish"]["price"] for s in skewers)
                 if budget < broth_price + min_skewer_price:
@@ -966,8 +915,6 @@ class QwenRouterService:
             }
 
         return None
-
-    # ========== 格式化回复 ==========
 
     def _format_hotpot_response(self, recommendation: dict, budget: float, spicy: str, user_input: str,
                                 user_prefs: dict) -> str:
@@ -1050,8 +997,6 @@ class QwenRouterService:
         return content
 
         return content
-
-    # ========== 核心业务方法 ==========
 
     def _handle_recommend(self, user_input: str, user_prefs: dict) -> dict:
         """处理推荐请求（全新推荐）"""
@@ -1141,12 +1086,10 @@ class QwenRouterService:
                     break
             pass
 
-        # 如果菜系是甜品或饮品，辣度默认不辣
         if cuisine == "甜品" or cuisine == "饮品":
             spicy = "不辣"
             print(f"[推荐] 菜系为{cuisine}，辣度自动设为不辣")
 
-        # 提取辣度
         if "不辣" in user_input or "不吃辣" in user_input:
             spicy = "不辣"
         elif "特辣" in user_input:
@@ -1156,7 +1099,6 @@ class QwenRouterService:
         elif "微辣" in user_input:
             spicy = "微辣"
 
-        # 提取忌口
         avoid_pattern = r'不要([\u4e00-\u9fa5]{2,6})(?=[，,。！？\s]|$)'
         avoid_matches = re.findall(avoid_pattern, user_input)
 
@@ -1181,10 +1123,8 @@ class QwenRouterService:
 
         print(f"[全新推荐] 预算: {budget} ({budget_type}: {budget_min}-{budget_max}), 菜系: {cuisine}, 辣度: {spicy}, 忌口: {avoid}")
 
-        # 获取排除列表
         exclude_ids = self.conversation_context.get("recommended_ids", [])
 
-        # ========== 优先规则 ==========
         if specific_restaurant:
             print(f"[推荐] 用户指定餐厅: {specific_restaurant}")
             return self._handle_specific_restaurant_recommend(
@@ -1277,16 +1217,13 @@ class QwenRouterService:
 
         print(f"[指定餐厅] 找到餐厅: {restaurant_name}, 菜系: {restaurant['cuisine']}")
 
-        # 获取该餐厅的菜品
         dishes = DISHES_BY_RESTAURANT.get(restaurant_id, [])
 
-        # 过滤菜品
         recommendations = []
         for dish in dishes:
             price = dish["price"]
             dish_spicy = dish.get("spicy", "微辣")
 
-            # 预算过滤
             if budget_type == "within":
                 if price > budget_max:
                     continue
@@ -1297,7 +1234,6 @@ class QwenRouterService:
                 if price < budget_min or price > budget_max:
                     continue
 
-            # 辣度过滤
             if spicy == "不辣" and dish_spicy != "不辣":
                 continue
             elif spicy == "微辣" and dish_spicy not in ["不辣", "微辣", "中辣"]:
@@ -1307,7 +1243,6 @@ class QwenRouterService:
             elif spicy == "特辣" and dish_spicy not in ["中辣", "特辣", "麻辣"]:
                 continue
 
-            # 忌口过滤
             if avoid:
                 if self._contains_avoid_ingredient(dish["name"], avoid):
                     continue
@@ -1317,7 +1252,6 @@ class QwenRouterService:
                 "restaurant": restaurant,
             })
 
-        # 按价格排序
         recommendations.sort(key=lambda x: x["dish"]["price"])
 
         if not recommendations:
@@ -1339,9 +1273,6 @@ class QwenRouterService:
                                         budget_type: str = "exact") -> dict:
         """处理用户指定具体菜品的推荐"""
 
-        from data.mock_restaurants import RESTAURANTS, DISHES_BY_RESTAURANT
-
-        # 查找该菜品
         all_items = self._get_all_dishes_with_restaurant()
         target_dish = None
         target_restaurant = None
@@ -1360,7 +1291,6 @@ class QwenRouterService:
 
         dish_price = target_dish["price"]
 
-        # 检查是否在预算范围内
         if budget_type == "within":
             if dish_price > budget_max:
                 return {
@@ -1386,7 +1316,6 @@ class QwenRouterService:
                     "workflow": None
                 }
 
-        # 辣度检查
         dish_spicy = target_dish.get("spicy", "微辣")
         if spicy == "不辣" and dish_spicy != "不辣":
             return {
@@ -1396,7 +1325,6 @@ class QwenRouterService:
                 "workflow": None
             }
 
-        # 忌口检查
         if avoid:
             if self._contains_avoid_ingredient(target_dish["name"], avoid):
                 avoid_text = "、".join(avoid)
@@ -1407,13 +1335,11 @@ class QwenRouterService:
                     "workflow": None
                 }
 
-        # 将指定菜品作为推荐结果
         recommendations = [{
             "dish": target_dish,
             "restaurant": target_restaurant,
         }]
 
-        # 同时推荐该餐厅的其他推荐菜品
         other_dishes = []
         for item in all_items:
             if item["restaurant"]["id"] == target_restaurant["id"] and item["dish"]["name"] != dish_name:
@@ -1428,7 +1354,6 @@ class QwenRouterService:
                     if budget_min <= price <= budget_max:
                         other_dishes.append(item)
 
-        # 按价格排序
         other_dishes.sort(key=lambda x: x["dish"]["price"])
         recommendations.extend(other_dishes[:4])
 
@@ -1443,7 +1368,6 @@ class QwenRouterService:
                                            budget_type: str = "exact") -> dict:
         """处理普通推荐（已有推荐数据）"""
 
-        # 分析用户常点菜品和餐厅（仅在首次推荐时分析，非游客模式）
         if not user_session.is_guest and self.conversation_context.get('user_frequent_dishes') is None:
             try:
                 from services.order_stats import order_stats
@@ -1463,7 +1387,6 @@ class QwenRouterService:
                 self.conversation_context['user_frequent_dishes'] = []
                 self.conversation_context['user_frequent_restaurants'] = []
 
-        # 保存搜索参数
         self.conversation_context["last_search_params"] = {
             "budget": budget,
             "budget_min": budget_min,
@@ -1553,7 +1476,6 @@ class QwenRouterService:
                 "workflow": None
             }
 
-        # 更新搜索参数
         self.conversation_context["last_search_params"] = {
             "budget": budget,
             "budget_min": budget_min,
@@ -2042,8 +1964,6 @@ class QwenRouterService:
             "workflow": None
         }
 
-    # ========== API 调用 ==========
-
     def _call_cloud_api(self, messages: list) -> dict:
         """调用 DeepSeek API"""
         headers = {
@@ -2100,8 +2020,6 @@ class QwenRouterService:
             outputs[0][len(inputs.input_ids[0]):], skip_special_tokens=True
         )
         return response.strip()
-
-    # ========== 主对话接口 ==========
 
     def chat(self, user_input: str, user_prefs: dict, context: list = None) -> dict:
         """主对话接口 - AI 意图识别优先"""

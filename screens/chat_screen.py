@@ -29,7 +29,6 @@ class ChatMessage(BoxLayout):
         self.padding = [dp(10), dp(8), dp(10), dp(8)]
         self.spacing = dp(4)
 
-        # 根据发送者设置背景和位置
         if is_user:
             self.md_bg_color = (0.95, 0.87, 0.82, 1)
             self.pos_hint = {"right": 1}
@@ -39,7 +38,6 @@ class ChatMessage(BoxLayout):
             self.pos_hint = {"x": 0}
             self.size_hint_x = 0.8
 
-        # 发送者标签
         sender_label = MDLabel(
             text=sender,
             theme_text_color="Secondary",
@@ -48,7 +46,6 @@ class ChatMessage(BoxLayout):
             height=dp(20)
         )
 
-        # 内容标签 - 不绑定 texture_size 到 height，直接让标签自适应
         content_label = MDLabel(
             text=content,
             theme_text_color="Primary",
@@ -57,17 +54,14 @@ class ChatMessage(BoxLayout):
             valign="top",
             text_size=(self.width - dp(20), None)
         )
-        # 让标签高度根据内容自动调整
         content_label.bind(
             texture_size=lambda instance, size: setattr(instance, 'height', size[1])
         )
-        # 当容器宽度变化时更新 text_size
         self.bind(width=lambda instance, w: setattr(content_label, 'text_size', (w - dp(20), None)))
 
         self.add_widget(sender_label)
         self.add_widget(content_label)
 
-        # 计算总高度
         self.bind(minimum_height=self.setter('height'))
 
 
@@ -115,7 +109,7 @@ class ChatScreen(MDScreen):
         Thread(target=lambda: self.qwen.load_models(on_loaded), daemon=True).start()
 
     def _show_loading_dialog(self, text):
-        """显示加载对话框（修复中文显示）"""
+        """显示加载对话框"""
         from kivymd.uix.spinner import MDSpinner
         from kivymd.uix.boxlayout import MDBoxLayout
         from kivymd.uix.label import MDLabel
@@ -151,11 +145,9 @@ class ChatScreen(MDScreen):
             content_cls=content
         )
 
-        # 设置标题字体
         if chinese_font:
             if hasattr(self.loading_dialog, 'title_label'):
                 self.loading_dialog.title_label.font_name = chinese_font
-            # 设置内容字体
             if hasattr(self.loading_dialog, 'content_cls'):
                 for child in self.loading_dialog.content_cls.children:
                     if hasattr(child, 'font_name'):
@@ -284,7 +276,6 @@ class ChatScreen(MDScreen):
 
     def _go_to_tracking(self, order_id):
         """跳转到追踪页面"""
-        # 确保 tracking 屏幕存在
         if self.manager.has_screen('tracking'):
             tracking_screen = self.manager.get_screen('tracking')
             tracking_screen._order_id = order_id
@@ -297,7 +288,6 @@ class ChatScreen(MDScreen):
         from services.local_auth import user_session
         import random
 
-        # 从 qwen 服务的上下文中获取当前待确认的订单
         order = self.qwen.conversation_context.get("current_order")
 
         if not order:
@@ -307,7 +297,6 @@ class ChatScreen(MDScreen):
         dish = order["dish"]
         restaurant = order["restaurant"]
 
-        # 构建订单项
         items = [{
             "dish_name": dish['name'],
             "price": dish['price'],
@@ -316,7 +305,6 @@ class ChatScreen(MDScreen):
 
         self._add_message("系统", f"正在提交订单：{dish['name']} ({restaurant['name']})...", is_user=False)
 
-        # 创建订单
         success, result = user_session.create_order(
             restaurant_name=restaurant['name'],
             items=items,
@@ -332,10 +320,8 @@ class ChatScreen(MDScreen):
             content += f"预计送达：{restaurant['delivery_time']}分钟"
             self._add_message("系统", content, is_user=False)
 
-            # 清空待确认订单
             self.qwen.conversation_context["current_order"] = None
 
-            # 可选：跳转到订单页面
             Clock.schedule_once(lambda dt: setattr(self.manager, 'current', 'orders'), 2)
         else:
             self._add_message("系统", f"下单失败：{result}", is_user=False)

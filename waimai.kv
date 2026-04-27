@@ -356,12 +356,12 @@
                     spacing: dp(16)
 
                     MDRaisedButton:
-                        text: "❤ 我的收藏"
+                        text: "我的收藏"
                         size_hint_x: 0.5
                         on_release: root.show_favorites()
 
                     MDRaisedButton:
-                        text: "⚠ 我的避雷"
+                        text: "我的避雷"
                         size_hint_x: 0.5
                         on_release: root.show_blacklist()
 
@@ -373,7 +373,7 @@
 
                 MDTextField:
                     id: budget_input
-                    mode: "rectangle"  # 修复
+                    mode: "rectangle"
                     input_filter: "int"
                     text: root.budget_text
                     hint_text: "每次点餐的默认预算"
@@ -432,7 +432,7 @@
 
                     MDTextField:
                         id: avoid_input
-                        mode: "rectangle"  # 修复
+                        mode: "rectangle"
                         size_hint_x: 0.7
                         hint_text: "如：香菜、花生、葱"
 
@@ -453,7 +453,7 @@
 
                 MDTextField:
                     id: address_input
-                    mode: "rectangle"  # 修复
+                    mode: "rectangle"
                     multiline: True
                     max_height: dp(100)
                     hint_text: "省市区 + 详细地址"

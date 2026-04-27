@@ -147,15 +147,11 @@ class PreferencesScreen(MDScreen):
             item.add_widget(icon_btn)
             avoid_list.add_widget(item)
 
-    # ========== 辣度选择 ==========
-
     def select_spicy(self, level):
         """选择辣度"""
         self.spicy_level = level
         self._update_spicy_chips()
         MDSnackbar(MDLabel(text=f"辣度偏好：{level}")).open()
-
-    # ========== 忌口管理 ==========
 
     def add_avoid_food(self):
         """添加忌口食物"""
@@ -210,8 +206,6 @@ class PreferencesScreen(MDScreen):
             self.avoid_foods.remove(food)
             self._update_avoid_list()
             MDSnackbar(MDLabel(text=f"已删除：{food}")).open()
-
-    # ========== 订单总结弹窗 ==========
 
     def _check_order_summary_popup(self, dt):
         """检查并显示订单总结弹窗"""
@@ -324,8 +318,6 @@ class PreferencesScreen(MDScreen):
 
         dialog.open()
 
-    # ========== 保存设置 ==========
-
     def save_preferences(self):
         """保存所有偏好设置"""
         print("=" * 50)
@@ -380,8 +372,6 @@ class PreferencesScreen(MDScreen):
         # 刷新 UI 显示
         self._update_ui(0)
 
-    # ========== 收藏和避雷列表 ==========
-
     def show_favorites(self):
         """显示收藏列表（带编号）"""
 
@@ -407,12 +397,10 @@ class PreferencesScreen(MDScreen):
             dialog.open()
             return
 
-        # 构建显示文本
         text_lines = []
         for idx, item in enumerate(favorites, 1):
             text_lines.append(f"{idx}. {item['restaurant_name']} - {item['dish_name']}")
 
-        # 保存 favorites 列表供后续使用
         self.current_favorites = favorites
 
         # 内容布局
@@ -424,7 +412,6 @@ class PreferencesScreen(MDScreen):
             height=dp(300)
         )
 
-        # 显示列表的标签
         list_text = "\n".join(text_lines)
         list_label = MDLabel(
             text=list_text,
@@ -437,7 +424,6 @@ class PreferencesScreen(MDScreen):
         if chinese_font:
             list_label.font_name = chinese_font
 
-        # 编号输入框
         input_label = MDLabel(
             text="请输入要移除的编号:",
             size_hint_y=None,
@@ -606,15 +592,12 @@ class PreferencesScreen(MDScreen):
 
         dialog.open()
 
-    # ========== 账号管理 ==========
-
     def go_home(self):
         """返回首页"""
         self.manager.current = 'home'
 
     def logout(self):
         """退出登录"""
-        # 清空聊天记录
         chat_screen = self.manager.get_screen('chat')
         chat_screen.messages = []
         chat_screen.clear_chat()
@@ -636,7 +619,6 @@ class PreferencesScreen(MDScreen):
             "recommended_broth_ids": [],
         }
 
-        # 退出登录
         local_auth.logout()
         user_session.logout()
         self.manager.current = 'login'

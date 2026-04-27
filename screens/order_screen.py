@@ -60,12 +60,9 @@ class OrderScreen(MDScreen):
         if empty_label:
             empty_label.opacity = 0
 
-        # 按 order_seq 数值降序排序（最新的在前）
         if user_session.is_guest:
-            # 游客订单按创建时间排序
             orders.sort(key=lambda x: x.get('created_at', ''), reverse=True)
         else:
-            # 注册用户按 order_seq 数值降序排序
             orders.sort(key=lambda x: x.get('order_seq', 0), reverse=True)
 
         for order in orders:
@@ -73,13 +70,11 @@ class OrderScreen(MDScreen):
             total_price = order.get('total_price', 0)
             status = order.get('status', '未知状态')
 
-            # 使用 display_order_id 作为订单号显示
             order_id = order.get('display_order_id', order.get('id', ''))
             created_at = order.get('created_at', '')
             if created_at and len(created_at) > 16:
                 created_at = created_at[:16]
 
-            # 格式化显示
             display_text = f"订单 {order_id}  {shop_name}  {total_price}元  {status}"
 
             item = OneLineListItem(

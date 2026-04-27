@@ -85,7 +85,7 @@ class LoginScreen(MDScreen):
             return
 
         if not nickname:
-            nickname = phone  # 如果没有昵称，使用手机号作为昵称
+            nickname = phone
 
         success, result = local_auth.register(nickname, password, phone)
         if success:

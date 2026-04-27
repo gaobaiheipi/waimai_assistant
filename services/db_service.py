@@ -61,7 +61,7 @@ class DatabaseService:
             cursor.execute('ALTER TABLE preferences ADD COLUMN last_summary_count INTEGER DEFAULT 0')
             print("[数据库] 已为 preferences 表添加 last_summary_count 字段")
 
-        # orders 表 - 添加 order_seq 字段
+        # orders 表
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS orders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -111,10 +111,8 @@ class DatabaseService:
                )
            ''')
 
-        # 为已存在的表添加缺失的列
         self._add_missing_columns(cursor)
 
-        # 为已存在的表添加 order_seq 列并填充数据
         cursor.execute("PRAGMA table_info(orders)")
         existing_columns = [col[1] for col in cursor.fetchall()]
         if 'order_seq' not in existing_columns:
@@ -126,6 +124,7 @@ class DatabaseService:
                 )
             ''')
             print("[数据库] 已为现有订单填充 order_seq")
+        self._create_demo_data(cursor)
 
         conn.commit()
         conn.close()
@@ -152,7 +151,6 @@ class DatabaseService:
                 except Exception as e:
                     print(f"添加列 {col_name} 失败: {e}")
 
-    # ========== 用户相关 ==========
 
     def register_user(self, username: str, password: str, phone: str) -> tuple:
         """注册用户
@@ -163,7 +161,6 @@ class DatabaseService:
             conn = self._get_connection()
             cursor = conn.cursor()
 
-            # 检查手机号是否已存在（手机号应该是唯一的）
             cursor.execute("SELECT id FROM users WHERE phone = ?", (phone,))
             if cursor.fetchone():
                 return False, "该手机号已注册"
@@ -171,7 +168,6 @@ class DatabaseService:
             password_hash = hashlib.sha256(password.encode()).hexdigest()
             created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            # username 存昵称，phone 存手机号
             cursor.execute('''
                 INSERT INTO users (username, password_hash, phone, created_at)
                 VALUES (?, ?, ?, ?)
@@ -179,7 +175,6 @@ class DatabaseService:
 
             user_id = cursor.lastrowid
 
-            # 初始化偏好
             cursor.execute('''
                 INSERT INTO preferences (user_id, spiciness_level, budget_range, avoid_foods, last_summary_count, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -256,8 +251,6 @@ class DatabaseService:
 
         except Exception as e:
             return False, str(e)
-
-    # ========== 偏好相关 ==========
 
     def get_preferences(self, user_id: int) -> Dict:
         """获取用户偏好"""
@@ -355,8 +348,6 @@ class DatabaseService:
             import traceback
             traceback.print_exc()
             return False
-
-    # ========== 订单相关 ==========
 
     def create_order(self, user_id: int, restaurant_name: str,
                      items: List[Dict], total_price: float) -> tuple:
@@ -491,8 +482,6 @@ class DatabaseService:
             print(f"更新订单状态失败: {e}")
             return False
 
-    # ========== 收藏相关 ==========
-
     def add_favorite(self, user_id: int, restaurant_name: str, dish_name: str, dish_price: float = None) -> bool:
         """添加收藏"""
         try:
@@ -570,8 +559,6 @@ class DatabaseService:
             print(f"检查收藏失败: {e}")
             return False
 
-    # ========== 避雷相关 ==========
-
     def add_blacklist(self, user_id: int, restaurant_name: str, dish_name: str, reason: str = None) -> bool:
         """添加避雷"""
         try:
@@ -646,6 +633,98 @@ class DatabaseService:
         except Exception as e:
             print(f"检查避雷失败: {e}")
             return False
+
+    def _create_demo_data(self, cursor):
+        """创建演示数据（仅当 test1 用户不存在时）"""
+        import hashlib
+        import json
+        from datetime import datetime, timedelta
+        import random
+
+        cursor.execute("SELECT id FROM users WHERE username = 'test_20dingdan'")
+        existing_user = cursor.fetchone()
+
+        if existing_user:
+            print("[演示数据] 用户 test_20dingdan 已存在，跳过创建")
+            return
+
+        print("[演示数据] 正在创建演示用户 test_20dingdan...")
+
+        try:
+            from data.mock_restaurants import RESTAURANTS, DISHES_BY_RESTAURANT
+        except ImportError:
+            print("[演示数据] 无法导入 mock 数据，跳过")
+            return
+
+        cursor.execute("SELECT MAX(id) FROM users")
+        max_id = cursor.fetchone()[0]
+        user_id = max_id + 1 if max_id else 100
+
+        username = "test_20dingdan"
+        password_hash = hashlib.sha256("123456".encode()).hexdigest()
+        phone = "13800138000"
+        created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        cursor.execute('''
+            INSERT INTO users (id, username, password_hash, phone, created_at)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (user_id, username, password_hash, phone, created_at))
+
+        cursor.execute('''
+            INSERT INTO preferences (user_id, spiciness_level, budget_range, default_address, avoid_foods, last_summary_count, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (user_id, '微辣', '20', '', '[]', 0, created_at))
+
+        all_items = []
+        drinks_keywords = ["奶茶", "咖啡", "柠檬茶", "果茶", "拿铁", "卡布奇诺", "美式", "果汁", "可乐", "雪碧"]
+
+        for restaurant in RESTAURANTS:
+            if restaurant["cuisine"] in ["火锅", "串串"]:
+                continue
+            dishes = DISHES_BY_RESTAURANT.get(restaurant["id"], [])
+            for dish in dishes:
+                dish_name = dish["name"]
+                is_drink = any(kw in dish_name for kw in drinks_keywords)
+                if not is_drink:
+                    all_items.append({
+                        "restaurant_name": restaurant["name"],
+                        "dish_name": dish_name,
+                        "dish_price": dish["price"],
+                    })
+
+        print(f"[演示数据] 可用菜品数量: {len(all_items)}")
+
+        if not all_items:
+            print("[演示数据] 没有可用菜品，跳过订单创建")
+            return
+
+        current_time = datetime.now()
+
+        for i in range(19):
+            item = random.choice(all_items)
+            order_seq = i + 1
+            total_price = round(random.uniform(35, 45), 1)
+            items_json = json.dumps([{
+                "dish_name": item["dish_name"],
+                "price": item["dish_price"],
+                "quantity": 1
+            }], ensure_ascii=False)
+
+            days_ago = 19 - i
+            created_at_order = (current_time - timedelta(days=days_ago)).strftime("%Y-%m-%d %H:%M:%S")
+
+            cursor.execute('''
+                INSERT INTO orders 
+                (user_id, order_seq, restaurant_name, items_json, total_price, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (
+            user_id, order_seq, item["restaurant_name"], items_json, str(total_price), '已完成', created_at_order))
+
+        print(f"[演示数据] 创建完成！")
+        print(f"  用户ID: {user_id}")
+        print(f"  账号: test_20dingdan")
+        print(f"  密码: 123456")
+        print(f"  订单数: 19")
 
 
 # 单例

@@ -28,7 +28,7 @@ class TrackingScreen(MDScreen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.update_clock = None
-        self.is_simulating = False  # 是否正在模拟中
+        self.is_simulating = False
         self.status_to_value = {
             '已下单': 0,
             '商家已接单': 25,
@@ -43,18 +43,15 @@ class TrackingScreen(MDScreen):
 
         print(f"[追踪页面] 当前用户: {user_session.nickname}, 是否游客: {user_session.is_guest}")
 
-        # 重置状态
         self.simulation_step = 0
         self.sim_status = None
         self.sim_rider_name = None
         self.sim_rider_phone = None
 
-        # 清除旧的定时器
         if self.update_clock:
             self.update_clock.cancel()
             self.update_clock = None
 
-        # 重新加载
         if hasattr(self, '_order_id') and self._order_id:
             self.load_tracking(self._order_id)
         else:
@@ -85,19 +82,15 @@ class TrackingScreen(MDScreen):
             if user_session.is_guest:
                 order = user_session.get_order_by_id(self.order_id)
             else:
-                # 尝试将 order_id 转换为数据库ID
                 try:
-                    # 如果 order_id 是 "1_1" 格式，需要找到对应的数据库ID
                     if '_' in str(self.order_id):
                         for o in user_session.get_orders():
                             if o.get('display_order_id') == self.order_id:
                                 order = o
                                 break
                     else:
-                        # 直接作为数据库ID查询
                         order = user_session.get_order_tracking(int(self.order_id))
                 except (ValueError, TypeError):
-                    # 作为显示订单号查找
                     for o in user_session.get_orders():
                         if o.get('display_order_id') == self.order_id:
                             order = o
@@ -152,11 +145,9 @@ class TrackingScreen(MDScreen):
             if result:
                 status = result.get('status', '已下单')
 
-                # 如果正在模拟中，且模拟状态比数据库状态新，则不覆盖
                 if self.is_simulating:
                     current_progress = self.progress_value
                     db_progress = self.status_to_value.get(status, 0)
-                    # 只有数据库进度大于当前进度时才更新（避免回退）
                     if db_progress > current_progress:
                         self.status_text = status
                         self.progress_value = db_progress
@@ -165,11 +156,9 @@ class TrackingScreen(MDScreen):
                         print(f"[数据库] 跳过更新，当前进度 {current_progress} >= 数据库 {db_progress}")
                     return
 
-                # 非模拟状态，正常更新
                 self.status_text = status
                 self.progress_value = self.status_to_value.get(status, 0)
 
-                # 骑手信息
                 rider_name = result.get('rider_name') or ""
                 phone = result.get('rider_phone') or ""
                 self.rider_phone = str(phone) if phone else ""
@@ -179,7 +168,6 @@ class TrackingScreen(MDScreen):
                 else:
                     self.rider_info = "骑手正在分配中..."
 
-                # 预计送达时间
                 if status == "已送达":
                     self.eta_text = "已送达"
                 elif status == "即将送达":
@@ -208,10 +196,8 @@ class TrackingScreen(MDScreen):
 
             order_id_int = int(self.order_id)
 
-            # 更新状态
             user_session.db.update_order_status(order_id_int, status)
 
-            # 如果有骑手信息，也更新
             if rider_name and rider_phone:
                 import sqlite3
                 conn = sqlite3.connect("./data/waimai.db")
@@ -233,7 +219,6 @@ class TrackingScreen(MDScreen):
         current_status = self.status_text
         print(f"[模拟] 启动配送，当前状态: {current_status}")
 
-        # 标记正在模拟
         self.is_simulating = True
 
         if current_status == "已下单":
@@ -255,10 +240,8 @@ class TrackingScreen(MDScreen):
         phone = f"138{random.randint(10000000, 99999999)}"
         rider_name = random.choice(rider_names)
 
-        # 更新数据库
         self._update_database_status("商家已接单", rider_name, phone)
 
-        # 更新UI
         self.status_text = "商家已接单"
         self.progress_value = 25
         self.rider_phone = phone
@@ -321,7 +304,6 @@ class TrackingScreen(MDScreen):
 
     def _refresh_tracking(self, dt):
         """刷新追踪信息"""
-        # 调用加载方法，内部会判断是否覆盖
         self._load_from_database()
 
     def on_leave(self):
@@ -377,7 +359,6 @@ class TrackingScreen(MDScreen):
                 ]
             )
 
-            # 设置标题和按钮字体
             if chinese_font:
                 if hasattr(dialog, 'title_label'):
                     dialog.title_label.font_name = chinese_font

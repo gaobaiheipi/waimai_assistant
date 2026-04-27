@@ -67,10 +67,8 @@ class WaimaiApp(MDApp):
     user_avoid = ListProperty([])
 
     def build(self):
-        # Android 屏幕适配
         if sys.platform == 'android':
             from kivy.core.window import Window
-            # 获取实际屏幕大小
             Window.size = (Window.width, Window.height)
         self.theme_cls.theme_style = "Light"
         self.theme_cls.primary_palette = "DeepOrange"

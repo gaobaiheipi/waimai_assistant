@@ -74,13 +74,11 @@ def get_font_path():
     """获取中文字体路径"""
     from kivy.utils import platform
 
-    # 优先使用打包的字体
     packaged_font = os.path.join(get_app_root(), 'assets', 'fonts', 'msyh.ttc')
     if os.path.exists(packaged_font):
         return packaged_font
 
     if platform == 'android':
-        # Android 系统字体
         android_fonts = [
             "/system/fonts/NotoSansCJK-Regular.ttc",
             "/system/fonts/DroidSansFallback.ttf",

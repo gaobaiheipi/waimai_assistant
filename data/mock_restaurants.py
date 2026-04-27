@@ -3,7 +3,6 @@ import random
 import json
 from typing import List, Dict, Optional
 
-# ========== 餐厅数据 ==========
 RESTAURANTS = [
     # 川菜
     {"id": 1, "name": "川湘小馆", "cuisine": "川菜", "rating": 4.8, "avg_price": 35, "delivery_time": 35, "sales": 2300,
@@ -174,7 +173,6 @@ RESTAURANTS = [
      "tags": ["咖啡", "连锁"]},
 ]
 
-# ========== 菜品模板 ==========
 DISH_TEMPLATES = {
     "川菜": ["麻婆豆腐", "宫保鸡丁", "水煮鱼", "回锅肉", "鱼香肉丝", "辣子鸡", "毛血旺", "酸菜鱼", "夫妻肺片", "口水鸡",
              "干煸豆角", "水煮肉片", "担担面", "酸辣粉", "红油抄手"],
@@ -226,7 +224,6 @@ DISH_TEMPLATES = {
              "金桔柠檬", "百香果茶", "杨枝甘露"],
 }
 
-# ========== 辣度生成函数 ==========
 # 饮品关键词（无论什么菜系都默认为不辣）
 DRINKS_KEYWORDS = ["奶茶", "咖啡", "柠檬茶", "果茶", "拿铁", "卡布奇诺", "美式", "焦糖", "抹茶", "百香果", "金桔",
                    "养乐多"]
@@ -304,8 +301,6 @@ def get_spicy_level(dish_name: str, cuisine: str) -> str:
 
     return "不辣"
 
-
-# ========== 忌口检测函数 ==========
 def get_allergens(dish_name: str) -> list:
     """根据菜品名称返回忌口标签"""
     allergens = []
@@ -328,8 +323,6 @@ def get_allergens(dish_name: str) -> list:
 
     return allergens
 
-
-# ========== 生成菜品 ==========
 def generate_dishes():
     """生成所有餐厅的菜品"""
     dishes_by_restaurant = {}
@@ -386,8 +379,6 @@ def generate_dishes():
 # 生成数据
 DISHES_BY_RESTAURANT = generate_dishes()
 
-
-# ========== 查询函数 ==========
 def get_restaurant(restaurant_id: int) -> Optional[Dict]:
     """根据ID获取餐厅"""
     for r in RESTAURANTS:
