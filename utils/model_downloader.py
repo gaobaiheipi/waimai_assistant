@@ -5,7 +5,15 @@ from kivy.clock import Clock
 from typing import Callable, Optional
 
 from utils.paths import get_models_dir
+import platform as _platform
 
+if _platform.system() != 'Android':
+    try:
+        from utils.model_downloader import get_model_downloader
+    except ImportError:
+        get_model_downloader = None
+else:
+    get_model_downloader = None
 
 class ModelDownloader:
     """静默模型下载器"""

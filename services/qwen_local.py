@@ -116,18 +116,21 @@ class QwenRouterService:
 
     def _check_memory(self) -> bool:
         """检查可用内存是否足够加载3B模型（约6GB）"""
-        try:
-            import psutil
-            available_memory = psutil.virtual_memory().available
-            available_gb = available_memory / (1024 ** 3)
-            print(f"[内存检查] 可用内存: {available_gb:.2f} GB")
-            return available_gb >= 5.0
-        except ImportError:
-            print("[内存检查] psutil未安装，跳过3B模型加载")
+        if platform == 'android':
             return False
-        except Exception as e:
-            print(f"[内存检查] 检查失败: {e}")
-            return False
+        else:
+            try:
+                import psutil
+                available_memory = psutil.virtual_memory().available
+                available_gb = available_memory / (1024 ** 3)
+                print(f"[内存检查] 可用内存: {available_gb:.2f} GB")
+                return available_gb >= 5.0
+            except ImportError:
+                print("[内存检查] psutil未安装，跳过3B模型加载")
+                return False
+            except Exception as e:
+                print(f"[内存检查] 检查失败: {e}")
+                return False
 
     def load_models(self, callback: Optional[Callable] = None):
         """加载本地模型（仅在 local 模式下使用）"""

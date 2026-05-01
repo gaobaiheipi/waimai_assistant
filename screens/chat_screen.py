@@ -1,4 +1,5 @@
 # screens/chat_screen.py - 简化版 ChatMessage，避免属性绑定错误
+from sys import platform
 
 from kivy.clock import Clock
 from kivy.properties import StringProperty, BooleanProperty
@@ -85,6 +86,10 @@ class ChatScreen(MDScreen):
 
     def _check_model(self):
         """检查并加载模型"""
+        if platform == 'android':
+            self.is_model_ready = True
+            self._add_system_message("AI 助手已就绪 [云端模式]")
+            return
         self._show_loading_dialog("正在初始化...")
 
         # 显示当前模式
