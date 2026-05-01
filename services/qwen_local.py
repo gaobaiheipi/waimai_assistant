@@ -5,6 +5,8 @@ import json
 import requests
 import random
 from typing import Dict, List, Callable, Optional
+
+import torch
 from kivy.clock import Clock
 from kivy.utils import platform
 
@@ -112,6 +114,21 @@ class QwenRouterService:
             print("[模型] 模型不存在，开始静默下载...")
             self.downloader.start_download(on_download_result)
 
+    def _check_memory(self) -> bool:
+        """检查可用内存是否足够加载3B模型（约6GB）"""
+        try:
+            import psutil
+            available_memory = psutil.virtual_memory().available
+            available_gb = available_memory / (1024 ** 3)
+            print(f"[内存检查] 可用内存: {available_gb:.2f} GB")
+            return available_gb >= 5.0
+        except ImportError:
+            print("[内存检查] psutil未安装，跳过3B模型加载")
+            return False
+        except Exception as e:
+            print(f"[内存检查] 检查失败: {e}")
+            return False
+
     def load_models(self, callback: Optional[Callable] = None):
         """加载本地模型（仅在 local 模式下使用）"""
         if self.mode == 'cloud':
@@ -139,16 +156,20 @@ class QwenRouterService:
                         Clock.schedule_once(lambda dt: callback(False, "0.5B模型加载失败"), 0)
                     return
 
-                print("\n[2/2] 尝试加载 3B 生成模型...")
-                # try:
-                #     self._load_large_model()
-                #     if self.model_large:
-                #         print("[3B模型] 加载成功，将用于生成健康提示")
-                #     else:
-                #         print("[3B模型] 加载失败，将使用0.5B生成健康提示")
-                # except Exception as e:
-                #     print(f"[3B模型] 加载异常: {e}，将继续使用0.5B")
-                #     self.model_large = None
+                print("\n[2/2] 检查是否需要加载 3B 生成模型...")
+                if self._check_memory():
+                    try:
+                        self._load_large_model()
+                        if self.model_large:
+                            print("[3B模型] 加载成功")
+                        else:
+                            print("[3B模型] 加载失败，使用0.5B生成健康提示")
+                    except Exception as e:
+                        print(f"[3B模型] 加载异常: {e}")
+                        self.model_large = None
+                else:
+                    print("[3B模型] 内存不足，跳过加载，使用0.5B生成健康提示")
+                    self.model_large = None
 
                 self.is_ready = True
                 if callback:
@@ -220,6 +241,7 @@ class QwenRouterService:
                 trust_remote_code=True,
                 local_files_only=True,
                 low_cpu_mem_usage=True,
+                torch_dtype=torch.float16,
                 device_map="cpu"
             )
             self.model_large.eval()
@@ -227,6 +249,13 @@ class QwenRouterService:
             print("3B 模型加载成功")
             return True
 
+        except RuntimeError as e:
+            if "out of memory" in str(e).lower() or "cuda" in str(e).lower():
+                print(f"[3B模型] 内存不足，无法加载: {e}")
+            else:
+                print(f"[3B模型] 加载失败: {e}")
+            self.model_large = None
+            return False
         except Exception as e:
             print(f"3B模型加载失败: {e}")
             self.model_large = None
