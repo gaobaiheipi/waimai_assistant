@@ -12,6 +12,7 @@ from kivy.utils import platform
 import sys
 
 from services.db_service import get_db_service
+from utils.model_downloader import get_model_downloader
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data.mock_restaurants import get_recommendations, get_restaurant, RESTAURANTS, DISHES_BY_RESTAURANT
@@ -32,6 +33,8 @@ class QwenRouterService:
         self.tokenizer_large = None
         self.is_ready = False
         self.is_loading = False
+        self.downloader = get_model_downloader()
+        self.is_downloading = False
 
         # 云端 API 相关
         self.cloud_api_url = "https://api.deepseek.com/v1/chat/completions"
@@ -85,6 +88,26 @@ class QwenRouterService:
                 self.load_models()
         else:
             print(f"[模式] 无效模式: {mode}")
+
+    def check_and_load_models(self, callback: Optional[Callable] = None):
+        """检查模型并下载（如果需要）"""
+        if self.downloader.is_model_downloaded():
+            self.load_models(callback)
+        else:
+            print("[模型] 模型不存在，开始静默下载...")
+            self.is_downloading = True
+
+            def on_download_complete(success, msg):
+                self.is_downloading = False
+                if success:
+                    print("[模型] 下载完成，开始加载模型")
+                    self.load_models(callback)
+                else:
+                    print(f"[模型] 下载失败: {msg}")
+                    if callback:
+                        callback(False, f"模型下载失败: {msg}")
+
+            self.downloader.download_model(on_download_complete)
 
     def load_models(self, callback: Optional[Callable] = None):
         """加载本地模型（仅在 local 模式下使用）"""

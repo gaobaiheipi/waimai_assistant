@@ -73,4 +73,11 @@ class ModelDownloader:
         threading.Thread(target=_download, daemon=True).start()
 
 
-model_downloader = ModelDownloader()
+# 单例
+_downloader = None
+
+def get_model_downloader():
+    global _downloader
+    if _downloader is None:
+        _downloader = ModelDownloader()
+    return _downloader

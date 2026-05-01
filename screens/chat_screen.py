@@ -106,7 +106,7 @@ class ChatScreen(MDScreen):
 
             Clock.schedule_once(update_ui, 0)
 
-        Thread(target=lambda: self.qwen.load_models(on_loaded), daemon=True).start()
+        Thread(target=lambda: self.qwen.check_and_load_models(on_loaded), daemon=True).start()
 
     def _show_loading_dialog(self, text):
         """显示加载对话框"""
