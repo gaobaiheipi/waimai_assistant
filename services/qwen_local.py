@@ -6,7 +6,7 @@ import requests
 import random
 from typing import Dict, List, Callable, Optional
 
-import torch
+
 from kivy.clock import Clock
 from kivy.utils import platform
 
@@ -134,6 +134,7 @@ class QwenRouterService:
 
     def load_models(self, callback: Optional[Callable] = None):
         """加载本地模型（仅在 local 模式下使用）"""
+        import torch
         if self.mode == 'cloud':
             self.is_ready = True
             if callback:
