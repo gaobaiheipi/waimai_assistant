@@ -91,6 +91,11 @@ class QwenRouterService:
 
     def check_and_load_models(self, callback: Optional[Callable] = None):
         """检查模型并下载（如果需要）"""
+        if platform == 'android':
+            print("[模型] Android环境，跳过本地模型检查")
+            if callback:
+                Clock.schedule_once(lambda dt: callback(True, "Android使用云端模式"), 0)
+            return
         def on_download_result(success, msg):
             if success:
                 print(f"[模型] {msg}，开始加载模型")
