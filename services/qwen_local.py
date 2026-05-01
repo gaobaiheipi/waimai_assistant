@@ -134,7 +134,6 @@ class QwenRouterService:
 
     def load_models(self, callback: Optional[Callable] = None):
         """加载本地模型（仅在 local 模式下使用）"""
-        import torch
         if self.mode == 'cloud':
             self.is_ready = True
             if callback:
@@ -227,6 +226,7 @@ class QwenRouterService:
         """加载 3B 模型（本地）"""
         try:
             from transformers import AutoTokenizer, AutoModelForCausalLM
+            import torch
 
             local_path = "./models/Qwen/Qwen2.5-3B-Instruct"
 
@@ -1115,8 +1115,6 @@ class QwenRouterService:
 
         return content
 
-        return content
-
     def _handle_recommend(self, user_input: str, user_prefs: dict) -> dict:
         """处理推荐请求（全新推荐）"""
         # 解析预算信息
@@ -1262,7 +1260,7 @@ class QwenRouterService:
             print(f"[推荐] 用户指定菜系: {cuisine}")
             if cuisine == "火锅":
                 result = self._handle_hotpot_recommend(budget, spicy, avoid, user_input, user_prefs,
-                                                     budget_min, budget_max, budget_type)
+                                                       budget_min, budget_max, budget_type)
                 if not result.get("success") or "没有找到" in result.get("content", ""):
                     # 保存搜索参数供后续修改使用
                     self.conversation_context["last_search_params"] = {
@@ -2288,9 +2286,14 @@ class QwenRouterService:
 
         if self.mode == 'cloud':
             try:
+                prompt = f"""作为健康饮食助手，为以下菜品生成一句简短的健康提示（20字以内）：
+                    菜品：{dish_list}
+                    要求：积极正面、个性化、针对这些菜品的特点。
+
+                    健康提示："""
                 messages = [
                     {"role": "system", "content": "你是健康饮食助手，只输出一句简短的健康提示（20字以内）。"},
-                    {"role": "user", "content": f"为菜品{dish_list}生成健康提示"}
+                    {"role": "user", "content": prompt}
                 ]
                 result = self._call_cloud_api(messages)
                 if result.get("success"):
