@@ -91,23 +91,21 @@ class QwenRouterService:
 
     def check_and_load_models(self, callback: Optional[Callable] = None):
         """检查模型并下载（如果需要）"""
-        if self.downloader.is_model_downloaded():
+        def on_download_result(success, msg):
+            if success:
+                print(f"[模型] {msg}，开始加载模型")
+                self.load_models(callback)
+            else:
+                print(f"[模型] 下载失败: {msg}")
+                if callback:
+                    Clock.schedule_once(lambda dt: callback(False, f"模型下载失败: {msg}"), 0)
+
+        if self.downloader.check_model_exists():
+            print("[模型] 模型已存在，直接加载")
             self.load_models(callback)
         else:
             print("[模型] 模型不存在，开始静默下载...")
-            self.is_downloading = True
-
-            def on_download_complete(success, msg):
-                self.is_downloading = False
-                if success:
-                    print("[模型] 下载完成，开始加载模型")
-                    self.load_models(callback)
-                else:
-                    print(f"[模型] 下载失败: {msg}")
-                    if callback:
-                        callback(False, f"模型下载失败: {msg}")
-
-            self.downloader.download_model(on_download_complete)
+            self.downloader.start_download(on_download_result)
 
     def load_models(self, callback: Optional[Callable] = None):
         """加载本地模型（仅在 local 模式下使用）"""
