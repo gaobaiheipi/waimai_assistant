@@ -294,37 +294,67 @@ class ChatScreen(MDScreen):
             self._add_message("系统", "没有待确认的订单，请先选择菜品。", is_user=False)
             return
 
-        dish = order["dish"]
-        restaurant = order["restaurant"]
+        if "items" in order:
+            items = order["items"]
+            restaurant_name = order["restaurant"]["name"]
+            total_price = order["total_price"]
+            items_text = "、".join([item["dish_name"] for item in items])
 
-        items = [{
-            "dish_name": dish['name'],
-            "price": dish['price'],
-            "quantity": 1
-        }]
+            self._add_message("系统", f"正在提交订单：{restaurant_name}...", is_user=False)
 
-        self._add_message("系统", f"正在提交订单：{dish['name']} ({restaurant['name']})...", is_user=False)
+            success, result = user_session.create_order(
+                restaurant_name=restaurant_name,
+                items=items,
+                total_price=total_price
+            )
 
-        success, result = user_session.create_order(
-            restaurant_name=restaurant['name'],
-            items=items,
-            total_price=dish['price']
-        )
+            if success:
+                order_num = result
+                content = f"订单已提交成功！\n\n订单号：{order_num}\n"
+                content += f"商家：{restaurant_name}\n"
+                content += f"菜品：{items_text}\n"
+                content += f"金额：{total_price}元\n"
+                content += f"预计送达：{random.randint(20, 45)}分钟"
+                self._add_message("系统", content, is_user=False)
 
-        if success:
-            order_num = result if result else f"WM{random.randint(100000, 999999)}"
-            content = f"订单已提交成功！\n\n订单号：{order_num}\n"
-            content += f"商家：{restaurant['name']}\n"
-            content += f"菜品：{dish['name']}\n"
-            content += f"金额：{dish['price']}元\n"
-            content += f"预计送达：{restaurant['delivery_time']}分钟"
-            self._add_message("系统", content, is_user=False)
+                self.qwen.conversation_context["current_order"] = None
+                self._last_order_id = order_num
+                Clock.schedule_once(lambda dt: setattr(self.manager, 'current', 'orders'), 2)
+            else:
+                self._add_message("系统", f"下单失败：{result}", is_user=False)
 
-            self.qwen.conversation_context["current_order"] = None
-
-            Clock.schedule_once(lambda dt: setattr(self.manager, 'current', 'orders'), 2)
         else:
-            self._add_message("系统", f"下单失败：{result}", is_user=False)
+            dish = order["dish"]
+            restaurant = order["restaurant"]
+
+            items = [{
+                "dish_name": dish['name'],
+                "price": dish['price'],
+                "quantity": 1
+            }]
+
+            self._add_message("系统", f"正在提交订单：{dish['name']} ({restaurant['name']})...", is_user=False)
+
+            success, result = user_session.create_order(
+                restaurant_name=restaurant['name'],
+                items=items,
+                total_price=dish['price']
+            )
+
+            if success:
+                order_num = result
+                content = f"订单已提交成功！\n\n订单号：{order_num}\n"
+                content += f"商家：{restaurant['name']}\n"
+                content += f"菜品：{dish['name']}\n"
+                content += f"金额：{dish['price']}元\n"
+                content += f"预计送达：{restaurant['delivery_time']}分钟"
+                self._add_message("系统", content, is_user=False)
+
+                self.qwen.conversation_context["current_order"] = None
+                self._last_order_id = order_num
+                Clock.schedule_once(lambda dt: setattr(self.manager, 'current', 'orders'), 2)
+            else:
+                self._add_message("系统", f"下单失败：{result}", is_user=False)
 
     def _wf_query_order(self, params):
         """工作流：查询订单"""

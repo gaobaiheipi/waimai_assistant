@@ -140,15 +140,15 @@ class QwenRouterService:
                     return
 
                 print("\n[2/2] 尝试加载 3B 生成模型...")
-                try:
-                    self._load_large_model()
-                    if self.model_large:
-                        print("[3B模型] 加载成功，将用于生成健康提示")
-                    else:
-                        print("[3B模型] 加载失败，将使用0.5B生成健康提示")
-                except Exception as e:
-                    print(f"[3B模型] 加载异常: {e}，将继续使用0.5B")
-                    self.model_large = None
+                # try:
+                #     self._load_large_model()
+                #     if self.model_large:
+                #         print("[3B模型] 加载成功，将用于生成健康提示")
+                #     else:
+                #         print("[3B模型] 加载失败，将使用0.5B生成健康提示")
+                # except Exception as e:
+                #     print(f"[3B模型] 加载异常: {e}，将继续使用0.5B")
+                #     self.model_large = None
 
                 self.is_ready = True
                 if callback:
@@ -1228,11 +1228,39 @@ class QwenRouterService:
         if cuisine is not None:
             print(f"[推荐] 用户指定菜系: {cuisine}")
             if cuisine == "火锅":
-                return self._handle_hotpot_recommend(budget, spicy, avoid, user_input, user_prefs,
+                result = self._handle_hotpot_recommend(budget, spicy, avoid, user_input, user_prefs,
                                                      budget_min, budget_max, budget_type)
+                if not result.get("success") or "没有找到" in result.get("content", ""):
+                    # 保存搜索参数供后续修改使用
+                    self.conversation_context["last_search_params"] = {
+                        "budget": budget,
+                        "budget_min": budget_min,
+                        "budget_max": budget_max,
+                        "budget_type": budget_type,
+                        "keyword": None,
+                        "cuisine": cuisine,
+                        "spicy": spicy,
+                        "avoid": avoid.copy(),
+                        "exclude_restaurant": None,
+                    }
+                return result
             elif cuisine == "串串":
-                return self._handle_chuanchuan_recommend(budget, spicy, avoid, user_input, user_prefs,
+                result = self._handle_chuanchuan_recommend(budget, spicy, avoid, user_input, user_prefs,
                                                          budget_min, budget_max, budget_type)
+                if not result.get("success") or "没有找到" in result.get("content", ""):
+                    # 保存搜索参数供后续修改使用
+                    self.conversation_context["last_search_params"] = {
+                        "budget": budget,
+                        "budget_min": budget_min,
+                        "budget_max": budget_max,
+                        "budget_type": budget_type,
+                        "keyword": None,
+                        "cuisine": cuisine,
+                        "spicy": spicy,
+                        "avoid": avoid.copy(),
+                        "exclude_restaurant": None,
+                    }
+                return result
             else:
                 return self._handle_normal_recommend(budget, spicy, avoid, user_input, user_prefs, cuisine,
                                                      budget_min, budget_max, budget_type)
@@ -1799,64 +1827,146 @@ class QwenRouterService:
         exclude_ids = self.conversation_context.get("recommended_ids", [])
         print(f"[修改推荐] 排除菜品ID列表: {exclude_ids}")
 
-        recommendations = self._get_recommendations_from_mock_exclude_hotpot(
-            budget, None, cuisine, spicy, avoid, exclude_ids,
-            budget_min, budget_max, budget_type
-        )
+        if cuisine == "火锅":
+            print(f"[修改推荐] 菜系为火锅，使用火锅推荐规则")
+            hotpot_rec = self._get_hotpot_recommendations(budget, spicy, avoid, budget_min, budget_max, budget_type)
+            if hotpot_rec:
+                # 构造推荐列表格式
+                recommendations = [hotpot_rec["broth"]] + hotpot_rec.get("sides", [])
+                content = self._format_hotpot_response(hotpot_rec, budget, spicy, user_input, user_prefs)
+                # 更新上下文
+                for rec in recommendations:
+                    if rec["dish"]["id"] not in self.conversation_context["recommended_ids"]:
+                        self.conversation_context["recommended_ids"].append(rec["dish"]["id"])
+                self.conversation_context["current_recommendations"] = recommendations
+                self.conversation_context["last_budget"] = budget
+                self.conversation_context["last_cuisine"] = cuisine
+                self.conversation_context["last_spicy"] = spicy
+                self.conversation_context["last_avoid"] = avoid
+                self.conversation_context["last_search_params"] = {
+                    "budget": budget,
+                    "budget_min": budget_min,
+                    "budget_max": budget_max,
+                    "budget_type": budget_type,
+                    "keyword": None,
+                    "cuisine": cuisine,
+                    "spicy": spicy,
+                    "avoid": avoid.copy(),
+                    "exclude_restaurant": None,
+                }
+                return {
+                    "success": True,
+                    "content": content,
+                    "model": "qwen-0.5b (0.5B)" if self.mode == 'local' else "Deepseek",
+                    "workflow": None,
+                }
+            else:
+                return {
+                    "success": True,
+                    "content": f"抱歉，在{budget}元预算内没有找到合适的火锅组合。\n\n当前条件：{spicy}口味，预算{budget}元\n\n建议继续提高预算或修改口味偏好。",
+                    "model": "qwen-0.5b (0.5B)" if self.mode == 'local' else "Deepseek",
+                    "workflow": None
+                }
 
-        print(f"[修改推荐] 找到 {len(recommendations)} 个推荐菜品")
-        if recommendations:
-            for rec in recommendations[:3]:
-                print(f"  - {rec['dish']['name']} ({rec['restaurant']['name']}) - {rec['dish']['price']}元")
+        elif cuisine == "串串":
+            print(f"[修改推荐] 菜系为串串，使用串串推荐规则")
+            chuanchuan_rec = self._get_chuanchuan_recommendations(budget, spicy, avoid, budget_min, budget_max,
+                                                                  budget_type)
+            if chuanchuan_rec:
+                recommendations = [chuanchuan_rec["broth"]] + chuanchuan_rec.get("skewers", [])
+                content = self._format_hotpot_response(chuanchuan_rec, budget, spicy, user_input, user_prefs)
+                for rec in recommendations:
+                    if rec["dish"]["id"] not in self.conversation_context["recommended_ids"]:
+                        self.conversation_context["recommended_ids"].append(rec["dish"]["id"])
+                self.conversation_context["current_recommendations"] = recommendations
+                self.conversation_context["last_budget"] = budget
+                self.conversation_context["last_cuisine"] = cuisine
+                self.conversation_context["last_spicy"] = spicy
+                self.conversation_context["last_avoid"] = avoid
+                self.conversation_context["last_search_params"] = {
+                    "budget": budget,
+                    "budget_min": budget_min,
+                    "budget_max": budget_max,
+                    "budget_type": budget_type,
+                    "keyword": None,
+                    "cuisine": cuisine,
+                    "spicy": spicy,
+                    "avoid": avoid.copy(),
+                    "exclude_restaurant": None,
+                }
+                return {
+                    "success": True,
+                    "content": content,
+                    "model": "qwen-0.5b (0.5B)" if self.mode == 'local' else "Deepseek",
+                    "workflow": None,
+                }
+            else:
+                return {
+                    "success": True,
+                    "content": f"抱歉，在{budget}元预算内没有找到合适的串串组合。\n\n当前条件：{spicy}口味，预算{budget}元\n\n建议继续提高预算或修改口味偏好。",
+                    "model": "qwen-0.5b (0.5B)" if self.mode == 'local' else "Deepseek",
+                    "workflow": None
+                }
 
-        self.conversation_context["last_budget"] = budget
-        self.conversation_context["last_cuisine"] = cuisine
-        self.conversation_context["last_spicy"] = spicy
-        self.conversation_context["last_avoid"] = avoid
-        self.conversation_context["current_recommendations"] = recommendations
-        self.conversation_context["last_search_params"] = {
-            "budget": budget,
-            "budget_min": budget_min,
-            "budget_max": budget_max,
-            "budget_type": budget_type,
-            "keyword": None,
-            "cuisine": cuisine,
-            "spicy": spicy,
-            "avoid": avoid.copy(),
-            "exclude_restaurant": None,
-        }
+        else:
+            recommendations = self._get_recommendations_from_mock_exclude_hotpot(
+                budget, None, cuisine, spicy, avoid, exclude_ids,
+                budget_min, budget_max, budget_type
+            )
 
-        for rec in recommendations:
-            if rec["dish"]["id"] not in self.conversation_context["recommended_ids"]:
-                self.conversation_context["recommended_ids"].append(rec["dish"]["id"])
+            print(f"[修改推荐] 找到 {len(recommendations)} 个推荐菜品")
+            if recommendations:
+                for rec in recommendations[:3]:
+                    print(f"  - {rec['dish']['name']} ({rec['restaurant']['name']}) - {rec['dish']['price']}元")
 
-        if not recommendations:
-            return {
-                "success": True,
-                "content": f"抱歉，调整后没有找到符合您需求的菜品。\n\n当前条件：{cuisine if cuisine else '不限'}菜系，{spicy}口味，预算{budget}元，忌口{avoid if avoid else '无'}",
-                "model": "qwen-0.5b (0.5B)" if self.mode == 'local' else "Deepseek",
-                "workflow": None
+            self.conversation_context["last_budget"] = budget
+            self.conversation_context["last_cuisine"] = cuisine
+            self.conversation_context["last_spicy"] = spicy
+            self.conversation_context["last_avoid"] = avoid
+            self.conversation_context["current_recommendations"] = recommendations
+            self.conversation_context["last_search_params"] = {
+                "budget": budget,
+                "budget_min": budget_min,
+                "budget_max": budget_max,
+                "budget_type": budget_type,
+                "keyword": None,
+                "cuisine": cuisine,
+                "spicy": spicy,
+                "avoid": avoid.copy(),
+                "exclude_restaurant": None,
             }
 
-        change_text = "，".join(change_desc)
-        content = f"{change_text}，为您重新推荐：\n\n"
-        for i, rec in enumerate(recommendations[:3], 1):
-            dish = rec["dish"]
-            restaurant = rec["restaurant"]
-            price = f"{dish['price']:.2f}"
-            content += f"{i}. {dish['name']} - {restaurant['name']}\n"
-            content += f"   评分{restaurant['rating']}分 | {price}元 | {restaurant['delivery_time']}分钟\n"
-            content += f"   辣度：{dish.get('spicy', '微辣')}\n\n"
+            for rec in recommendations:
+                if rec["dish"]["id"] not in self.conversation_context["recommended_ids"]:
+                    self.conversation_context["recommended_ids"].append(rec["dish"]["id"])
 
-        content += "回复数字选择，或继续调整。"
+            if not recommendations:
+                return {
+                    "success": True,
+                    "content": f"抱歉，调整后没有找到符合您需求的菜品。\n\n当前条件：{cuisine if cuisine else '不限'}菜系，{spicy}口味，预算{budget}元，忌口{avoid if avoid else '无'}",
+                    "model": "qwen-0.5b (0.5B)" if self.mode == 'local' else "Deepseek",
+                    "workflow": None
+                }
 
-        return {
-            "success": True,
-            "content": content,
-            "model": "qwen-0.5b (0.5B)" if self.mode == 'local' else "Deepseek",
-            "workflow": None,
-            "recommendations": recommendations
-        }
+            change_text = "，".join(change_desc)
+            content = f"{change_text}，为您重新推荐：\n\n"
+            for i, rec in enumerate(recommendations[:3], 1):
+                dish = rec["dish"]
+                restaurant = rec["restaurant"]
+                price = f"{dish['price']:.2f}"
+                content += f"{i}. {dish['name']} - {restaurant['name']}\n"
+                content += f"   评分{restaurant['rating']}分 | {price}元 | {restaurant['delivery_time']}分钟\n"
+                content += f"   辣度：{dish.get('spicy', '微辣')}\n\n"
+
+            content += "回复数字选择，或继续调整。"
+
+            return {
+                "success": True,
+                "content": content,
+                "model": "qwen-0.5b (0.5B)" if self.mode == 'local' else "Deepseek",
+                "workflow": None,
+                "recommendations": recommendations
+            }
 
     def _handle_hotpot_change(self, user_prefs: dict) -> dict:
         """处理火锅换一批"""
@@ -2165,6 +2275,44 @@ class QwenRouterService:
         user_lower = user_input.lower()
 
         print(f"[对话] 用户输入: {user_input}")
+
+        if re.search(r'下单|确认|就这个', user_lower):
+            current_recommendations = self.conversation_context.get("current_recommendations", [])
+            last_cuisine = self.conversation_context.get("last_cuisine")
+
+            # 判断是否是火锅或串串
+            if last_cuisine in ["火锅", "串串"] and current_recommendations:
+                print(f"[火锅/串串] 检测到下单意图，直接提交订单")
+                # 构建订单项
+                order_items = []
+                total_price = 0
+                restaurant_name = ""
+
+                for rec in current_recommendations:
+                    dish = rec["dish"]
+                    restaurant_name = rec["restaurant"]["name"]
+                    order_items.append({
+                        "dish_name": dish["name"],
+                        "price": dish["price"],
+                        "quantity": 1
+                    })
+                    total_price += dish["price"]
+
+                # 保存到待确认订单
+                self.conversation_context["current_order"] = {
+                    "items": order_items,
+                    "restaurant": {"name": restaurant_name},
+                    "total_price": round(total_price, 2)
+                }
+
+                # 触发下单工作流
+                return {
+                    "success": True,
+                    "content": "",
+                    "workflow": "submit_order",
+                    "params": {"user_input": user_input},
+                    "model": "workflow"
+                }
 
         # ========== 1. 纯数字选择 ==========
         if user_input.isdigit():
