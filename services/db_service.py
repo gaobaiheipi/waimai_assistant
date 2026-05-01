@@ -168,12 +168,16 @@ class DatabaseService:
             password_hash = hashlib.sha256(password.encode()).hexdigest()
             created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            cursor.execute('''
-                INSERT INTO users (username, password_hash, phone, created_at)
-                VALUES (?, ?, ?, ?)
-            ''', (username, password_hash, phone, created_at))
+            cursor.execute("SELECT MAX(id) FROM users")
+            max_id = cursor.fetchone()[0]
+            new_id = (max_id + 1) if max_id else 1
 
-            user_id = cursor.lastrowid
+            cursor.execute('''
+                        INSERT INTO users (id, username, password_hash, phone, created_at)
+                        VALUES (?, ?, ?, ?, ?)
+                    ''', (new_id, username, password_hash, phone, created_at))
+
+            user_id = new_id
 
             cursor.execute('''
                 INSERT INTO preferences (user_id, spiciness_level, budget_range, avoid_foods, last_summary_count, updated_at)
@@ -658,7 +662,7 @@ class DatabaseService:
 
         cursor.execute("SELECT MAX(id) FROM users")
         max_id = cursor.fetchone()[0]
-        user_id = max_id + 1 if max_id else 100
+        user_id = max_id + 1 if max_id else 1
 
         username = "test_20dingdan"
         password_hash = hashlib.sha256("123456".encode()).hexdigest()

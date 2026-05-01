@@ -194,22 +194,39 @@ class TrackingScreen(MDScreen):
             if not self.order_id or self.order_id == "无":
                 return
 
-            order_id_int = int(self.order_id)
+            from services.local_auth import user_session
 
-            user_session.db.update_order_status(order_id_int, status)
+            db_order_id = None
+            if user_session.is_guest:
+                for order in user_session.guest_orders:
+                    if order.get('id') == self.order_id:
+                        db_order_id = order.get('id')
+                        break
+            else:
+                orders = user_session.get_orders()
+                for order in orders:
+                    if order.get('display_order_id') == self.order_id:
+                        db_order_id = order.get('id')
+                        break
 
-            if rider_name and rider_phone:
+            if not db_order_id:
+                print(f"[数据库] 未找到订单: {self.order_id}")
+                return
+
+            user_session.update_order_status(str(db_order_id), status)
+            print(f"[数据库] 订单 {self.order_id} 状态更新为: {status}")
+
+            if rider_name and rider_phone and not user_session.is_guest:
                 import sqlite3
-                conn = sqlite3.connect("./data/waimai.db")
+                from utils.paths import get_db_path
+                conn = sqlite3.connect(get_db_path())
                 cursor = conn.cursor()
                 cursor.execute(
                     "UPDATE orders SET rider_name = ?, rider_phone = ? WHERE id = ?",
-                    (rider_name, rider_phone, order_id_int)
+                    (rider_name, rider_phone, db_order_id)
                 )
                 conn.commit()
                 conn.close()
-
-            print(f"[数据库] 订单 {self.order_id} 状态更新为: {status}")
 
         except Exception as e:
             print(f"更新数据库失败: {e}")

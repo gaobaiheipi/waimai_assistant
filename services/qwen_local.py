@@ -114,12 +114,20 @@ class QwenRouterService:
                     return
 
                 print("\n[2/2] 尝试加载 3B 生成模型...")
-                self._load_large_model()
+                try:
+                    self._load_large_model()
+                    if self.model_large:
+                        print("[3B模型] 加载成功，将用于生成健康提示")
+                    else:
+                        print("[3B模型] 加载失败，将使用0.5B生成健康提示")
+                except Exception as e:
+                    print(f"[3B模型] 加载异常: {e}，将继续使用0.5B")
+                    self.model_large = None
 
                 self.is_ready = True
                 if callback:
-                    msg = "单模型就绪(0.5B)"
-                    Clock.schedule_once(lambda dt: callback(True, msg), 0)
+                    model_status = "双模型就绪(0.5B+3B)" if self.model_large else "单模型就绪(0.5B)"
+                    Clock.schedule_once(lambda dt: callback(True, model_status), 0)
 
             except Exception as e:
                 print(f"加载异常: {e}")
@@ -480,8 +488,6 @@ class QwenRouterService:
                                           spicy: str = None, avoid: list = None,
                                           exclude_ids: list = None) -> list:
         """根据偏好和价格范围过滤推荐列表"""
-        from services.db_service import get_db_service
-        from services.local_auth import user_session
 
         filtered = []
         exclude_ids = exclude_ids or []
@@ -547,6 +553,9 @@ class QwenRouterService:
             if avoid:
                 if self._contains_avoid_ingredient(dish_name, avoid):
                     continue
+                if len(filtered) < 10 and self.model_large is not None:
+                    if self._check_ingredients_with_ai(dish_name, avoid):
+                        continue
             if dish["id"] in exclude_ids:
                 continue
 
@@ -916,6 +925,56 @@ class QwenRouterService:
 
         return None
 
+    def _check_ingredients_with_ai(self, dish_name: str, avoid_list: list) -> bool:
+        """使用AI判断菜品是否包含忌口食材"""
+        if not avoid_list:
+            return False
+
+        # 如果只有0.5B且不是云端模式，跳过AI检查
+        if self.mode == 'local' and self.model_large is None:
+            # 降级使用本地关键词匹配
+            return self._contains_avoid_ingredient(dish_name, avoid_list)
+
+        avoid_text = "、".join(avoid_list)
+
+        prompt = f"""请判断菜品"{dish_name}"是否包含以下忌口食材：{avoid_text}
+
+    请基于该菜品的常见做法来判断。
+
+    只返回JSON格式：{{"contains": true/false, "reason": "判断依据"}}
+
+    注意：不确定时返回false。"""
+
+        messages = [
+            {"role": "system", "content": "你是菜品配料分析专家。只返回JSON格式结果。"},
+            {"role": "user", "content": prompt}
+        ]
+
+        try:
+            if self.mode == 'cloud':
+                result = self._call_cloud_api(messages)
+            else:
+                if self.model_large is None:
+                    return self._contains_avoid_ingredient(dish_name, avoid_list)
+                response = self._generate_local(
+                    self.model_large, self.tokenizer_large,
+                    messages, max_new_tokens=100
+                )
+                result = {"success": True, "content": response}
+
+            if result.get("success"):
+                content = result["content"].strip()
+                json_match = re.search(r'\{[^{}]*\}', content)
+                if json_match:
+                    data = json.loads(json_match.group())
+                    contains = data.get("contains", False)
+                    print(f"[AI忌口] {dish_name} 包含 {avoid_text}: {contains} - {data.get('reason', '')}")
+                    return contains
+        except Exception as e:
+            print(f"[AI忌口] 判断失败: {e}")
+
+        return self._contains_avoid_ingredient(dish_name, avoid_list)
+
     def _format_hotpot_response(self, recommendation: dict, budget: float, spicy: str, user_input: str,
                                 user_prefs: dict) -> str:
         """格式化火锅/串串推荐回复"""
@@ -990,7 +1049,8 @@ class QwenRouterService:
             content += f"   {dish.get('description', '人气推荐')}\n\n"
 
         content += "-" * 30 + "\n"
-        content += "健康提示：祝您用餐愉快，注意饮食均衡。\n"
+        health_tip = self._generate_health_tip(recommendations, spicy)
+        content += health_tip + "\n"
         content += "-" * 30 + "\n\n"
         content += "回复数字选择菜品，或说'换一批'重新推荐，说'下单'确认订单。"
 
@@ -2020,6 +2080,58 @@ class QwenRouterService:
             outputs[0][len(inputs.input_ids[0]):], skip_special_tokens=True
         )
         return response.strip()
+
+    def _generate_health_tip(self, recommendations: list, spicy: str) -> str:
+        """生成健康提示"""
+        dish_names = [rec["dish"]["name"] for rec in recommendations[:3]]
+        dish_list = "、".join(dish_names)
+
+        if spicy == "特辣":
+            base_tip = "特辣口味刺激性较强，建议搭配清淡饮品，保护肠胃。"
+        elif spicy == "中辣":
+            base_tip = "中辣口味适中，可搭配蔬菜均衡营养。"
+        elif spicy == "微辣":
+            base_tip = "微辣口味温和，适合日常饮食。"
+        else:
+            base_tip = "清淡口味有益健康，保持均衡饮食。"
+
+        if self.model_large is not None and self.mode == 'local':
+            try:
+                prompt = f"""作为健康饮食助手，为以下菜品生成一句简短的健康提示（20字以内）：
+    菜品：{dish_list}
+    要求：积极正面、个性化、针对这些菜品的特点。
+
+    健康提示："""
+
+                messages = [
+                    {"role": "system", "content": "你是健康饮食助手，只输出一句简短的健康提示。"},
+                    {"role": "user", "content": prompt}
+                ]
+
+                response = self._generate_local(
+                    self.model_large, self.tokenizer_large,
+                    messages, max_new_tokens=50
+                )
+                if response and len(response) < 50:
+                    return response.strip()
+            except Exception as e:
+                print(f"[3B模型] 生成健康提示失败: {e}")
+
+        if self.mode == 'cloud':
+            try:
+                messages = [
+                    {"role": "system", "content": "你是健康饮食助手，只输出一句简短的健康提示（20字以内）。"},
+                    {"role": "user", "content": f"为菜品{dish_list}生成健康提示"}
+                ]
+                result = self._call_cloud_api(messages)
+                if result.get("success"):
+                    content = result["content"].strip()
+                    if len(content) < 50:
+                        return content
+            except Exception as e:
+                print(f"[云端] 生成健康提示失败: {e}")
+
+        return base_tip + " 祝您用餐愉快！"
 
     def chat(self, user_input: str, user_prefs: dict, context: list = None) -> dict:
         """主对话接口 - AI 意图识别优先"""
